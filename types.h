@@ -200,6 +200,10 @@ typedef struct {
   real        *masse;
   real        *pot_eng;
 #endif
+#ifdef ANA
+  real        *ana_rho;     /* host electron density */
+  real        *ana_dF;      /* derivative of embedding energy */
+#endif // ANA
 #ifdef EAM2
   real        *eam_rho;     /* host electron density */
   real        *eam_dF;      /* derivative of embedding energy */
@@ -219,9 +223,10 @@ typedef struct {
 #ifdef TTM
   integer     *numneighs;
 #endif
-#ifdef LOD
-  double complex *lod; //local order parameter
-#endif
+#ifdef LOP
+  real        *lopi; // Local order parameter
+  integer     *lopn; // Number of neighbours for LOP
+#endif // LOP
 #ifdef NRB
   // 2.8.19 NRBN und NRBK nicht mehr benoetigt
   //integer **nrbi;   //array mit "nummern" der 12-nearest neighs (bisher nur fcc) sowie zellen-nummer-> keine kommun. noetig
@@ -380,11 +385,10 @@ typedef struct {
 #ifdef VARCHG
   int  n_charge;
 #endif
-//MYMOD local order param & nrb...
-#ifdef LOD
-  int n_lod;
+#ifdef LOP
+  int n_lopi;
+  int n_lopn;
 #endif
-//ENDOF MY MOD
 #ifdef VISCOUS
   int  n_viscfriction;
 #endif

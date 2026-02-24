@@ -81,6 +81,9 @@ void calc_forces(int steps)
 #ifdef COVALENT
       NEIGH(p,i)->n = 0;
 #endif
+#ifdef ANA
+      ANA_RHO(p,i) = 0.0; /* zero host electron density at atom site */
+#endif // ANA
 #ifdef EAM2
       EAM_RHO(p,i) = 0.0; /* zero host electron density at atom site */
 #ifdef EEAM
@@ -130,6 +133,24 @@ void calc_forces(int steps)
     imd_stop_timer( &ewald_time );
   }
 #endif
+
+#ifdef ANA
+  /* compute embedding energy and its derivative */
+  do_embedding_energy_ana();
+
+  for (n=0; n<nlists; ++n) {
+    for (k=0; k<npairs[n]; ++k) {
+      vektor pbc;
+      pair *P;
+      P = pairs[n]+k;
+      pbc.x = P->ipbc[0]*box_x.x + P->ipbc[1]*box_y.x + P->ipbc[2]*box_z.x;
+      pbc.y = P->ipbc[0]*box_x.y + P->ipbc[1]*box_y.y + P->ipbc[2]*box_z.y;
+      pbc.z = P->ipbc[0]*box_x.z + P->ipbc[1]*box_y.z + P->ipbc[2]*box_z.z;
+      do_forces_ana(cell_array + P->np, cell_array + P->nq, pbc,
+        &virial, &vir_xx, &vir_yy, &vir_zz, &vir_yz, &vir_zx, &vir_xy);
+    }
+  }
+#endif // ANA
 
 #ifdef EAM2
   /* compute embedding energy and its derivative */

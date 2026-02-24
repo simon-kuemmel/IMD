@@ -179,6 +179,10 @@ void copy_atom_cell_cell(cell *to, int i, cell *from, int j)
   to->pot_eng[i] = from->pot_eng[j];
 #endif
 #endif
+#ifdef ANA
+  to->ana_rho[i] = from->ana_rho[j]; 
+  to->ana_dF [i] = from->ana_dF [j]; 
+#endif // ANA
 #ifdef EAM2
   to->eam_rho[i] = from->eam_rho[j]; 
   to->eam_dF [i] = from->eam_dF [j]; 
@@ -620,6 +624,10 @@ void alloc_cell(cell *p, int n)
   memalloc( &p->pot_eng,  n, sizeof(real),     al, ncopy, 0, "pot_eng" );
 #endif
 #endif
+#ifdef ANA
+  memalloc( &p->ana_rho,  n, sizeof(real),     al, ncopy, 0, "ana_rho" );
+  memalloc( &p->ana_dF,   n, sizeof(real),     al, ncopy, 0, "ana_dF" );
+#endif // ANA
 #ifdef EAM2
   memalloc( &p->eam_rho,  n, sizeof(real),     al, ncopy, 0, "eam_rho" );
   memalloc( &p->eam_dF,   n, sizeof(real),     al, ncopy, 0, "eam_dF" );
@@ -646,8 +654,9 @@ void alloc_cell(cell *p, int n)
   memalloc( &p->fdj,n,sizeof(integer),al,ncopy,1,"fdj");
   memalloc( &p->fdk,n,sizeof(integer),al,ncopy,1,"fdk");
 #endif
-#ifdef LOD
-  memalloc( &p->lod,    n,     sizeof(double complex), al, ncopy, 1, "lod" );
+#ifdef LOP
+  memalloc( &p->lopi,    n,     sizeof(real), al, ncopy, 1, "lopi" );
+  memalloc( &p->lopn,    n,     sizeof(integer), al, ncopy, 1, "lopn" );
 #endif
 #ifdef NRB
   memalloc( &p->nrbid,  n*12, sizeof(integer), al, ncopy*12, 1, "nrbid" ); //12 neighs

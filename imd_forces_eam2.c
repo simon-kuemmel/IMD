@@ -124,7 +124,7 @@ void do_forces(cell *p, cell *q, vektor pbc, real *Epot, real *Virial,
       if (r2 <= pair_pot.end[col2]) {
         if (col1!=col2) {
           PAIR_INT(pot_zwi, pot_grad, pair_pot, col2, inc, r2, is_short);
-	}
+        }
 
         /* store force in temporary variable */
         force.x = d.x * pot_grad;

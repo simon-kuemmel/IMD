@@ -29,11 +29,12 @@
 *  computes the forces between atoms in two given cells
 *
 ******************************************************************************/
+#ifndef ASYMPOT
 #ifndef SIMD
 void do_forces(cell *p, cell *q, vektor pbc, real *Epot, real *Virial, 
                real *Vir_xx, real *Vir_yy, real *Vir_zz,
                real *Vir_yz, real *Vir_zx, real *Vir_xy)
-{
+{    
   int i,j,k;
   vektor d;
   vektor tmp_d;
@@ -56,14 +57,6 @@ void do_forces(cell *p, cell *q, vektor pbc, real *Epot, real *Virial,
   tmp_vir_vect.z = 0.0;
 #endif
 #endif
-
-//MYMOD
-#ifdef LOD
-  vektor qvec; //for summation over n.n.wave-vectors
-  vektor d2;
-  double qvec_fac=4.0*M_PI/alat;
-#endif 
-
     
   /* for each atom in first cell */
   for (i=0; i<p->n; ++i) {
@@ -106,10 +99,51 @@ void do_forces(cell *p, cell *q, vektor pbc, real *Epot, real *Virial,
 #endif
 
       /* compute pair interactions */
-#if defined(PAIR) || defined(KEATING)
-      /* PAIR and KEATING are mutually exclusive */
-#if defined(PAIR)
-      if (r2 <= pair_pot.end[col]) {
+#ifdef ANA
+      if (r2 <= ana_cutoff*ana_cutoff) {
+              
+#ifdef LOP
+        if (r2<=pow((sqrt(2)*a0/2 + a0)/2, 2)){
+          // Nearest-neighbour vectors
+          double nn_vectors[12][3] = {{a0*0.5, a0*0.5, 0.0},
+                                      {-a0*0.5, a0*0.5, 0.0},
+                                      {a0*0.5, -a0*0.5, 0.0},
+                                      {-a0*0.5, -a0*0.5, 0.0},
+                                      {0.0, a0*0.5, a0*0.5},
+                                      {0.0, -a0*0.5, a0*0.5},
+                                      {0.0, a0*0.5, -a0*0.5},
+                                      {0.0, -a0*0.5, -a0*0.5},
+                                      {a0*0.5, 0.0, a0*0.5},
+                                      {-a0*0.5, 0.0, a0*0.5},
+                                      {a0*0.5, 0.0, -a0*0.5},
+                                      {-a0*0.5, 0.0, -a0*0.5}};
+
+          double phi_tmp;
+          double phi_min;
+
+          for (int nn_vector_counter=0; nn_vector_counter<12; nn_vector_counter++){
+            phi_tmp = pow(d.x - nn_vectors[nn_vector_counter][0], 2)
+                    + pow(d.y - nn_vectors[nn_vector_counter][1], 2)
+                    + pow(d.z - nn_vectors[nn_vector_counter][2], 2);
+
+            // This is used to find the best agreement
+            if (nn_vector_counter==0){
+              phi_min = phi_tmp;
+            }
+            else{
+              if (phi_tmp<phi_min){
+                phi_min = phi_tmp;
+              }
+            }
+          }
+
+          // Assign best fitting value to arrays
+          LOPI(p, i) += phi_min;
+          LOPI(q, j) += phi_min;
+          LOPN(p, i) += 1;
+          LOPN(q, j) += 1;
+        }
+#endif // LOP
 
 
 #ifdef TTM
@@ -117,43 +151,119 @@ void do_forces(cell *p, cell *q, vektor pbc, real *Epot, real *Virial,
         NUMNEIGHS(q,j)++;
 #endif
 
-#ifdef LOD	
-	//erstmal nur fcc
-	d2.x=-d.x;
-	d2.y=-d.y;
-	d2.z=-d.z;
-	//100
-	qvec.x=qvec_fac;qvec.y=0;qvec.z=0;	
- 	LODP(p,i)+=cexp(I*SPROD(qvec,d));
-        LODP(q,j)+=cexp(I*SPROD(qvec,d2));
-	
-	//010
-        qvec.x=0;qvec.y=qvec_fac;qvec.z=0;
-        LODP(p,i)+=cexp(I*SPROD(qvec,d));
-	LODP(q,j)+=cexp(I*SPROD(qvec,d2));
+        CALC_PAIR_ENERGY(pot_zwi, pot_grad);
 
-	//001
-        qvec.x=0;qvec.y=0;qvec.z=1;
-        LODP(p,i)+=cexp(I*SPROD(qvec,d));
-	LODP(q,j)+=cexp(I*SPROD(qvec,d2));
+	if (isnan(pot_zwi)==1 || isnan(pot_grad)){
+          printf("%d, %d, %f, %f, %f\n", myid, i, r2, pot_zwi, pot_grad);
+        }
 
-	//110
-        qvec.x=qvec_fac;qvec.y=qvec_fac;qvec.z=0;
-        LODP(p,i)+=cexp(I*SPROD(qvec,d));
-	LODP(q,j)+=cexp(I*SPROD(qvec,d2));
+        /* store force in temporary variable */
+        force.x = d.x * pot_grad;
+        force.y = d.y * pot_grad;
+        force.z = d.z * pot_grad;
 
-	//011
-        qvec.x=0;qvec.y=qvec_fac;qvec.z=qvec_fac;
-        LODP(p,i)+=cexp(I*SPROD(qvec,d));
-	LODP(q,j)+=cexp(I*SPROD(qvec,d2));
+        /* accumulate forces */
+        pfptr = &KRAFT(p,i,X);
+        qfptr = &KRAFT(q,j,X);
+        *pfptr     += force.x; 
+        *qfptr     -= force.x; 
+        *(++pfptr) += force.y; 
+        *(++qfptr) -= force.y; 
+        *(++pfptr) += force.z; 
+        *(++qfptr) -= force.z; 
 
-	//101
-        qvec.x=qvec_fac;qvec.y=0;qvec.z=qvec_fac;
-        LODP(p,i)+=cexp(I*SPROD(qvec,d));
-	LODP(q,j)+=cexp(I*SPROD(qvec,d2));
+        *Epot      += pot_zwi;
 
+        pot_zwi *= 0.5;   /* avoid double counting */
+
+        POTENG(p,i) += pot_zwi;
+        POTENG(q,j) += pot_zwi;
+
+#ifdef P_AXIAL
+        tmp_vir_vect.x -= d.x * force.x;
+        tmp_vir_vect.y -= d.y * force.y;
+        tmp_vir_vect.z -= d.z * force.z;
+#else
+        tmp_virial     -= r2 * pot_grad;
 #endif
-//ENDOF MYMOD
+
+#ifdef STRESS_TENS
+        if (do_press_calc) {
+          /* avoid double counting of the virial */
+          force.x *= 0.5;
+          force.y *= 0.5;
+          force.z *= 0.5;
+          
+          PRESSTENS(p,i,xx) -= d.x * force.x;
+          PRESSTENS(q,j,xx) -= d.x * force.x;
+          PRESSTENS(p,i,yy) -= d.y * force.y;
+          PRESSTENS(q,j,yy) -= d.y * force.y;
+          PRESSTENS(p,i,xy) -= d.x * force.y;
+          PRESSTENS(q,j,xy) -= d.x * force.y;
+          PRESSTENS(p,i,zz) -= d.z * force.z;
+          PRESSTENS(q,j,zz) -= d.z * force.z;
+          PRESSTENS(p,i,yz) -= d.y * force.z;
+          PRESSTENS(q,j,yz) -= d.y * force.z;
+          PRESSTENS(p,i,zx) -= d.z * force.x;
+          PRESSTENS(q,j,zx) -= d.z * force.x;
+        }
+#endif
+      }
+#endif // ANA
+      
+#if defined(PAIR) || defined(KEATING)
+      /* PAIR and KEATING are mutually exclusive */
+#if defined(PAIR)
+      if (r2 <= pair_pot.end[col]) {
+              
+#ifdef LOP
+        if (r2<=pow((sqrt(2)*a0/2 + a0)/2, 2)){
+          // Nearest-neighbour vectors
+          double nn_vectors[12][3] = {{a0*0.5, a0*0.5, 0.0},
+                                      {-a0*0.5, a0*0.5, 0.0},
+                                      {a0*0.5, -a0*0.5, 0.0},
+                                      {-a0*0.5, -a0*0.5, 0.0},
+                                      {0.0, a0*0.5, a0*0.5},
+                                      {0.0, -a0*0.5, a0*0.5},
+                                      {0.0, a0*0.5, -a0*0.5},
+                                      {0.0, -a0*0.5, -a0*0.5},
+                                      {a0*0.5, 0.0, a0*0.5},
+                                      {-a0*0.5, 0.0, a0*0.5},
+                                      {a0*0.5, 0.0, -a0*0.5},
+                                      {-a0*0.5, 0.0, -a0*0.5}};
+
+          double phi_tmp;
+          double phi_min;
+
+          for (int nn_vector_counter=0; nn_vector_counter<12; nn_vector_counter++){
+            phi_tmp = pow(d.x - nn_vectors[nn_vector_counter][0], 2)
+                    + pow(d.y - nn_vectors[nn_vector_counter][1], 2)
+                    + pow(d.z - nn_vectors[nn_vector_counter][2], 2);
+
+            // This is used to find the best agreement
+            if (nn_vector_counter==0){
+              phi_min = phi_tmp;
+            }
+            else{
+              if (phi_tmp<phi_min){
+                phi_min = phi_tmp;
+              }
+            }
+          }
+
+          // Assign best fitting value to arrays
+          LOPI(p, i) += phi_min;
+          LOPI(q, j) += phi_min;
+          LOPN(p, i) += 1;
+          LOPN(q, j) += 1;
+        }
+#endif // LOP
+
+
+#ifdef TTM
+        NUMNEIGHS(p,i)++;
+        NUMNEIGHS(q,j)++;
+#endif
 
 #ifdef LINPOT
         PAIR_INT_LIN(pot_zwi, pot_grad, pair_pot_lin, col, inc, r2, is_short)
@@ -237,6 +347,25 @@ void do_forces(cell *p, cell *q, vektor pbc, real *Epot, real *Virial,
 #endif
       }
 #endif /* PAIR || KEATING */
+
+#ifdef ANA
+      /* compute host electron density */
+      if (r2 < ana_cutoff*ana_cutoff)  {
+        CALC_RHO(rho_h);
+        ANA_RHO(p,i) += rho_h; 
+      }
+      if (p_typ==q_typ) {
+        if (r2 < ana_cutoff*ana_cutoff){
+          ANA_RHO(q,j) += rho_h;
+        }
+      } else {
+        col2 = q_typ * ntypes + p_typ;
+        if (r2 < ana_cutoff*ana_cutoff) {
+          CALC_RHO(rho_h);
+          ANA_RHO(q,j) += rho_h; 
+        }
+      }
+#endif // ANA
 
 #ifdef EAM2
       /* compute host electron density */
@@ -326,3 +455,4 @@ void do_forces(cell *p, cell *q, vektor pbc, real *Epot, real *Virial,
 }
 
 #endif //SIMD
+#endif // ASYMPOT

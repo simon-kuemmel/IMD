@@ -439,7 +439,7 @@ void update_fd()
         if (node.natoms >= fd_min_atoms)
         {
           node.md_temp /= 3.0 * node.natoms;          
-          //node.md_temp/=3 * node.dens*fd_vol*1e-30/26.9815/AMU;          //SMOOTH TEMP?
+          //node.md_temp/=3 * node.dens*fd_vol*1e-30/atom_mass/AMU;          //SMOOTH TEMP?
         }
         else node.md_temp = 0.0;
         node2.md_temp = node.md_temp;
@@ -520,6 +520,8 @@ void do_FILLMESH(void)
           //////////////////////////////////////////////////////////////          
           //           IONISATIONSGRAD UND ELEK.DICHTE
           ////////////////////////////////////////////////////////////// 
+// MYMOD: Simon, 05.03.2025
+#ifdef TFM
 #ifndef COLRAD          
           node.Z=MeanCharge(node.temp*11604.5, node.dens, atomic_charge, atomic_weight,i,j,k);
           // node.Z=QfromT(node.temp,node.dens); //Möglichkeit zur Interpolation aus Tabelle, falls More-Fit ungenügend
@@ -534,6 +536,14 @@ void do_FILLMESH(void)
           node.ne = node.Z * node.dens / (atomic_weight * AMU); //Assumption: Quasi-neutrality condition
           node2.ne = node.ne;
 #endif
+#endif /* TFM */
+
+#ifdef TTT
+          node.Z = 1.0;
+	  node.ne = 1.0;
+	  node2.ne = node.ne;
+#endif
+// END MYMOD
           //////////////////////////////////////////////////////////////          
           //                      Wärmekapazität
           //////////////////////////////////////////////////////////////      
@@ -555,18 +565,6 @@ void do_FILLMESH(void)
           node.fd_k = getKappa(node.temp, node.md_temp, node.ne, node.Z); //Hardcoding ist faster
           node2.fd_k = node.fd_k;
 
-          //Möglichkeit zur trikubischen Interpolation aus Tablle --> Beliebiges Material 
-          //Dasselbe kann für Elek.phonon-Kopplung über einfaches copy/paste ergänzt werden
-          /* //TRIKUBISCHE INTERPOLATION AUS TABELLE // trikub. interpol ist recht langsam 
-           node.fd_k=KappaInterpol(node.dens,node.temp,node.md_temp);
-           if(node.fd_k==-1.0)
-           {
-              printf("steps:%d,proc:%d,i:%d,j:%d,k:%d, ERROR during KappaInterpol in FILLMESH, Te:%f (eV), Ti:%f (eV) ,dens:%f (kg/m^3),atoms:%d\n",
-                      steps,myid,i,j,k,node.temp,node.md_temp,node.dens,node.natoms);
-              error("ERROR during KappaInterpol in FILLMESH");
-           }
-          */
-
 #if DEBUG_LEVEL>0  
           //ACHTUNG: Das ist nur bei Hardcoding noetig. Bei Interpolation, sollte die Interpol-Funktion error-check machen
           //NaN kappa
@@ -581,7 +579,22 @@ void do_FILLMESH(void)
           //////////////////////////////////////////////////////////////   
           //                   GAMMA  (KOPPL.CONST)
           //////////////////////////////////////////////////////////////                    
+// MYMOD: Simon, 05.03.2025
+#ifdef TFM
           node.fd_g = getGamma(node.temp, node.md_temp, node.ne, node.Z);
+#endif
+
+#ifdef TTT
+          node.fd_g = GammaInterpol(node.dens,node.temp,node.md_temp);
+          if(node.fd_g==-1.0)
+          {
+            printf("steps:%d,proc:%d,i:%d,j:%d,k:%d, ERROR during GammaInterpol in FILLMESH, Te:%f (eV), Ti:%f (eV) ,dens:%f (kg/m^3),atoms:%d\n", steps,myid,i,j,k,node.temp,node.md_temp,node.dens,node.natoms);
+            error("ERROR during GammaInterpol in FILLMESH");
+          }
+
+#endif
+// END MYMOD
+
           node2.fd_g = node.fd_g;
           //NaN gamma
 #if DEBUG_LEVEL>0
@@ -619,12 +632,12 @@ void do_FILLMESH(void)
           if (node.natoms >= fd_min_atoms)
           {        
 
-             node.U =EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * 26.9815 * AMU * J2eV; // eV/Atom
+             node.U =EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * atom_mass * AMU * J2eV; // eV/Atom
              node2.U=node.U;
 
              //PLAUSIBILITY EOS CHECK:
-             double echeck= EOS_ee_from_r_te(node.dens, node.temp * 11604.5)*26.9815 * AMU * J2eV;
-             double tcheck = EOS_te_from_r_ee(node.dens, echeck/26.9815/AMU * eV2J) / 11604.5;
+             double echeck= EOS_ee_from_r_te(node.dens, node.temp * 11604.5)*atom_mass * AMU * J2eV;
+             double tcheck = EOS_te_from_r_ee(node.dens, echeck/atom_mass/AMU * eV2J) / 11604.5;
              double tinit=node.temp;
 
              if(ABS(tcheck -tinit) > tinit*0.01) // 1% unterschied
@@ -1133,7 +1146,7 @@ void init_ttm()
           /* no incoming thermal power per default */
           node2.source = node.source = 0.0;
           node2.fd_k = node.fd_k = 0;
-          node.fd_g = node.fd_g = 0;
+          node2.fd_g = node.fd_g = 0;
           node2.proc = node.proc = myid;
           node2.xi = node.xi = 0.0;
           node2.ne = node.ne = 0.0;
@@ -1404,7 +1417,7 @@ void do_ADV(double tau)
           //Temp updaten wenn zelle aktiviert
           if(node.natoms >= fd_min_atoms)
           {
-            node2.temp = EOS_te_from_r_ee(node.dens, node2.U / (26.9815 * AMU * J2eV)) / 11604.5;
+            node2.temp = EOS_te_from_r_ee(node.dens, node2.U / (atom_mass * AMU * J2eV)) / 11604.5;
           }     
 
         //IDEE: Evtl. statt te_from_re mittels Cv und DeltaU?
@@ -1584,7 +1597,7 @@ void do_cell_activation(void)
               }
             } //isnan ....
             //Interne Energie muss noch geupdatet werden (Falls fallback auf altes Schema)
-            node.U = node2.U= EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * 26.9815 * AMU * J2eV; // eV/Atom
+            node.U = node2.U= EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * atom_mass * AMU * J2eV; // eV/Atom
           } // endif isnan(temp) || temp<=0
 
         } // endif ..new cell activated...
@@ -1611,7 +1624,7 @@ void do_DIFF(double tau)
   //nicht von der zahl der atome pro Zelle, muss auch xi umgeschrieben werden da sonst
   //zellen mit wenigen Atomen viel zu stark erhitzt werden!    
   //double xi_fac=fd_vol/3.0/((double) diff_substeps);///((double) node.natoms); //ORIGINAL
-  double xi_fac = 26.9815 * AMU / 3.0 * 1e30 / ((double) diff_substeps); //NEU
+  double xi_fac = atom_mass * AMU / 3.0 * 1e30 / ((double) diff_substeps); //NEU
 
 
   double Ce; //specific heat
@@ -2326,7 +2339,7 @@ double sigma_e_ph(double Te, double Ti, double EF, double Na, double Z) //deprec
   double eta = BOLTZMAN * Te / EF;
   double eta_sq = eta * eta;
   double t = pow(9.0 * M_PI / 4.0, 4.0 / 3.0) * pow(Z, 1.0 / 3.0) * BOHR / r * sqrt((eta_sq + 0.16) * (eta_sq + 4.0 / 9.0));
-  double mAl = 26.9815 * AMU;
+  double mAl = atom_mass * AMU;
   double sigma = 4.0 * M_PI * pow(4.0 / 9.0 / M_PI, 4.0 / 3.0) * mAl * BOLTZMAN * Ti / HBAR / HBAR * pow(r / BOHR, 2.0) * pow(r, 4.0) / pow(Z, 4.0 / 3.0);
   sigma = sigma * eta * (log(t + 1) - t / (t + 1)) / sqrt(eta_sq + 0.16) / sqrt(eta_sq + 4.0 / 9.0);
   return sigma; //~6e-22
@@ -2513,7 +2526,7 @@ double getGamma(double Te, double Ti, double Ne, double Z) //POVAR
   double A2g = 20;
   double A3g = 0.25;
 
-  double  m_atom = 26.9815; //u
+  double  m_atom = atom_mass; //u
 
   double Ni = Ne / Z;                                     // [1/m3]
   double EF = fermi_E(Ne);                                // [J]
@@ -2527,24 +2540,6 @@ double getGamma(double Te, double Ti, double Ne, double Z) //POVAR
   return gamma;
 }
 
-/*
-double KappaInterpol(double rho, double Te, double Ti)
-{
-  double lgTe = log10(Te);
-  double lgTi = log10(Ti);
-  double Kappa = do_tricubinterp(&kappa_interp, rho, lgTe, lgTi);
-  if (Kappa == -1) return -1;
-  return Kappa;
-}
-double NueffInterpol(double rho, double Te, double Ti)
-{
-  double lgTe = log10(Te);
-  double lgTi = log10(Ti);
-  double nueff = do_tricubinterp(&nueff_interp, rho, lgTe, lgTi);
-  if (nueff == -1) return -1;
-  return nueff;
-}
-*/
 
 double getKappa(double Te, double Ti, double Ne, double Z) //POVAR
 {
@@ -2562,7 +2557,7 @@ double getKappa(double Te, double Ti, double Ne, double Z) //POVAR
   double A3t = 0.16;
   double A4t = 1.2;
 
-  //const double m_atom = 26.9815;
+  //const double m_atom = atom_mass;
 
   //double rho = fd_density(natoms,m_atom,vol);       // [kg/m3]
   //double omega_las = (2.0 * M_PI * LIGHTSPEED / lambda);  // [1/s]
@@ -2590,6 +2585,41 @@ double getKappa(double Te, double Ti, double Ne, double Z) //POVAR
   //return kappa_wr * 10.18e-15 / (1e10 * BOLTZMAN);                // Convert from SI -> IMDu
   return kappa_wr * 0.073768115942029;
 }
+
+
+// MYMOD: Simon, 05.03.2025
+double KappaInterpol(double rho, double Te, double Ti)
+{
+  double lgTe = log10(Te);
+  double lgTi = log10(Ti);
+  double Kappa = do_tricubinterp(&kappa_interp, rho, lgTe, lgTi);
+  if (Kappa == -1) return -1;
+  return Kappa;
+}
+
+
+double GammaInterpol(double rho, double Te, double Ti)
+{
+  double lgTe = log10(Te);
+  double lgTi = log10(Ti);
+  double Gamma = do_tricubinterp(&gamma_interp, rho, lgTe, lgTi);
+  if (Gamma == -1) return -1;
+  return Gamma;
+}
+
+
+/*
+double NueffInterpol(double rho, double Te, double Ti)
+{
+  double lgTe = log10(Te);
+  double lgTi = log10(Ti);
+  double nueff = do_tricubinterp(&nueff_interp, rho, lgTe, lgTi);
+  if (nueff == -1) return -1;
+  return nueff;
+}
+*/
+
+// END MYMOD
 
 /*************************************************************
 * MY MOD: Auxiliary function for string Parsing in TTM-Read  
@@ -2720,7 +2750,7 @@ if(r < intp_ee_from_r_tesqrt.xmin || r > intp_ee_from_r_tesqrt.xmax)
 
   // nnhpi_interpolate(intp_e_from_r_tsqrt.interpolator, &pout); //naturla neigh, sibson-rule
   lpi_interpolate_point(intp_ee_from_r_tesqrt.interpolator, &pout); //linear
-  //pout.z*=26.9815*AMU*6.2415091E18; // J/kg --> eV/Atom
+  //pout.z*=atom_mass*AMU*6.2415091E18; // J/kg --> eV/Atom
 #if DEBUG_LEVEL > 0
   if(isnan(pout.z)!=0)
   { 
@@ -2798,7 +2828,7 @@ double EOS_te_from_r_ee(double r, double e)
   }  
 #endif
 
-  //double eSI=e/(26.9815*AMU*6.2415091E18); // eV/Atom ---> J/kg
+  //double eSI=e/(atom_mass*AMU*6.2415091E18); // eV/Atom ---> J/kg
   double a = pow(intp_ee_from_r_tesqrt.ymin, 2.0);
   double b = pow(intp_ee_from_r_tesqrt.ymax, 2.0);
   double m = fminbnd(a, b, eeminfun, 1e-4, r, e);
@@ -3503,3 +3533,4 @@ void ttm_fill_ghost_layers(void)
 #endif
 }
 #endif /*MPI*/
+

@@ -241,6 +241,13 @@ int main(int argc, char **argv)
   MPI_Barrier(cpugrid);
   init_fdtd();
 #endif
+
+// MYMOD: Simon, 25.09.2025
+#ifdef TM2
+  tm2_init();
+#endif
+// END MYMOD
+
 #ifdef TMM
   tmm_init();
 #endif

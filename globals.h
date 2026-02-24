@@ -307,6 +307,17 @@ EXTERN real shiftz_rear  INIT(0.0);
 
 
 #ifdef TTM
+
+// MYMOD: Simon, 03.03.2025
+EXTERN str255 eps_filename INIT("\0");
+EXTERN str255 cve_filename INIT("\0");
+EXTERN str255 ee_filename INIT("\0");
+EXTERN str255 g_filename INIT("\0");
+EXTERN str255 phase_filename INIT("\0");
+EXTERN str255 k12_filename INIT("\0");
+EXTERN str255 pe_filename INIT("\0");
+// END MYMOD
+
 EXTERN struct timeval sstime;  //fuer timing tests
 EXTERN struct timeval eetime;
 
@@ -316,7 +327,14 @@ EXTERN nn_interp intp_ee_from_r_tesqrt;
 EXTERN nn_interp intp_phase_from_r_ti;
 EXTERN nn_interp  intp_pe_from_r_te;
 
-struct tricubinterp nueff_interp,kappa_interp;
+// MYMOD: Simon, 05.03.2025
+#ifdef TTT
+EXTERN nn_interp intp_eps_from_r_te;
+EXTERN nn_interp intp_g_from_r_te;
+#endif
+// END MYMOD
+
+EXTERN struct tricubinterp nueff_interp, kappa_interp, gamma_interp;
 
 EXTERN real fd_vol INIT(0);
 EXTERN real md_vol INIT(0.0);
@@ -411,9 +429,8 @@ EXTERN int* filter_stacki INIT(NULL);
 EXTERN cell** filter_stackq INIT(NULL);
 #endif 
 
-#ifdef LOD //local order parameter
-EXTERN real alat	INIT(0.0); //lattice param
-EXTERN real lodnorm	INIT(0.0); //normalization factor: when is atom regarded as "solid"
+#ifdef LOP // Local order parameter
+EXTERN real a0 INIT(0.0); // Lattice param
 #endif
 
 #ifdef NRB
@@ -439,6 +456,43 @@ EXTERN double nrb_xhi INIT(9e9);
 EXTERN double nrb_yhi INIT(9e9);
 EXTERN double nrb_ylo INIT(-9e9);
 #endif
+
+// MYMOD: Simon, 25.09.2025
+#ifdef TM2
+//ACHTUNG: In C gibt's (im gegensatz zu c++)
+//	   leider kein MPI_COMPLEX_DOUBLE datentyp
+//	   Deswegen der umständliche weg mit jeweils einem array für real und eines für imag
+EXTERN int *natomsglobal;
+
+EXTERN double  tm2_absorption_threshold INIT(20.0);
+EXTERN double* tm2_eps_real_arr_local;
+EXTERN double* tm2_eps_imag_arr_local;
+EXTERN double* tm2_alpha_arr_local;
+EXTERN double* tm2_eps_real_arr_global;
+EXTERN double* tm2_eps_imag_arr_global;
+EXTERN double* tm2_alpha_arr_global;
+EXTERN double* tm2_alpha_int_arr_global;
+EXTERN int* tm2_active_cell_local; //erspart an der ein oder anderen Stelle etwas Rechnerei
+EXTERN int* tm2_active_cell_global;
+EXTERN double* tm2_Qabs;
+EXTERN double* tm2_Qabs_scat;
+EXTERN double complex* km; //komplexe wellenzahl
+EXTERN double complex k0;
+EXTERN double tm2_refl;
+EXTERN double tm2_trans;
+EXTERN double tm2_abs;
+EXTERN double tm2_Fabs;
+EXTERN double t_FWHM;
+EXTERN double t1_FWHM;
+EXTERN double I_t;
+EXTERN double tm2_time INIT(0.0);
+EXTERN double tm2_dt INIT(0.0);
+EXTERN double tm2_theta INIT(0.0);
+EXTERN int    tm2_pol INIT(0);
+EXTERN double tm2_laser_threshold INIT(1e-5); //ab wann laser aktivieren?
+EXTERN double lambda_ball INIT(0.0); // Ballistic penetration depth
+#endif
+// END MYMOD
 
 #ifdef TMM
 //double complex* tmm_eps_arr_local;
@@ -479,9 +533,9 @@ EXTERN double  **eps_bb_data;
 EXTERN double tmm_laser_threshold INIT(1e-5); //ab wann laser aktivieren? 
 #endif
 
-#if defined(FDTD) || defined(LASER) || defined(TMM)
+#if defined(FDTD) || defined(LASER) || defined(TMM) || defined(TM2)
 EXTERN double* Lop1, *Lop2, *Lop3, *Lop4, *Lop5, *Lop6;  //Lorentz params //Achtung letztes ist omega_pl --> inline-calc.
-struct tricubinterp Lop1i,Lop2i,Lop3i,Lop4i,Lop5i;
+EXTERN struct tricubinterp Lop1i,Lop2i,Lop3i,Lop4i,Lop5i;
 EXTERN double hbarev INIT(6.582119487171653e-16);
 
 EXTERN MPI_Status stati2[4];
@@ -490,6 +544,10 @@ EXTERN real laser_sigma_t INIT(0.0); // in SI
 EXTERN real laser_sigma_t_squared INIT(0.0); //
 EXTERN real laser_sigma_t1 INIT(0.0); // in SI
 EXTERN real laser_sigma_t1_squared INIT(0.0); //
+
+EXTERN real tau_p INIT(1.3); // FWHM of laser pulse
+EXTERN real tau_p1 INIT(0.0); // FWHM of second laser pulse
+EXTERN real fluence INIT(0.0); // Laser fluence
 
 EXTERN real laser_t_0     INIT(0.0);   // in SI
 EXTERN real laser_t_1     INIT(0.0);   // in SI
@@ -1159,6 +1217,20 @@ EXTERN  ttm_Element * l1, * l2, * l3;
 EXTERN  double *xiarr_local; //Wird mit Allgather reduziert
 EXTERN  double *xiarr_global; //Wird mit Allgather reduziert
 
+#ifdef LOP
+EXTERN double *lopi_arr_local;
+EXTERN double *lopi_arr_global;
+EXTERN int *lopn_arr_local;
+EXTERN int *lopn_arr_global;
+#endif // LOP
+
+// MYMOD: Simon, 11.03.2025
+#ifdef ANAT
+EXTERN double *t_el_ana_arr_local;
+EXTERN double *t_el_ana_arr_global;
+#endif
+// END MYMOD
+
 EXTERN double *vcomxlocal,*vcomxglobal;
 EXTERN double *vcomylocal,*vcomyglobal;
 EXTERN double *vcomzlocal,*vcomzglobal;
@@ -1223,7 +1295,10 @@ EXTERN int vlatbuffer INIT(8); // So viele zellen werden von der letzten aus ign
 //EXTERN vlatmax last_active_cell_local,last_active_cell_global;
 EXTERN int last_active_cell_local,last_active_cell_global;
 
-EXTERN real vlatdens INIT(2.665655433e+03); // kg/m^3
+// MYMOD: Simon, 04.04.2025
+EXTERN real vlatdens INIT(1.0); // kg/m^3
+// END MYMOD
+
 //ENDOF MYMOD
 
 EXTERN int fd_min_atoms INIT(0);   /* minimum number of atoms needed in a
@@ -1402,6 +1477,23 @@ EXTERN real ew_fshift[10][10];
 #endif
 EXTERN int  fix_bks INIT(0);
 #endif
+
+#ifdef ANA
+// Parameters for Cu_RT
+EXTERN double morse_D INIT(0.13215932523333138);
+EXTERN double morse_a INIT(1.9416962353627534);
+EXTERN double morse_r0 INIT(2.676524335024871);
+EXTERN double bjs_f0 INIT(-2.514771599911805);
+EXTERN double bjs_gamma INIT(0.8035699785148168);
+EXTERN double bjs_f1 INIT(-0.012437418054337634);
+EXTERN double csw_a1 INIT(-0.404821355335015);
+EXTERN double csw_a2 INIT(-0.41311334838855235);
+EXTERN double csw_alpha INIT(2.0558420711456575);
+EXTERN double csw_beta INIT(3.33454395823037);
+
+EXTERN double sc_h INIT(0.5);
+EXTERN double ana_cutoff INIT(6.5);
+#endif // ANA
 
 #ifdef FEFL
 EXTERN real spring_rate[10] INIT(zero10);

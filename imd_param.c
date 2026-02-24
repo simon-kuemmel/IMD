@@ -1975,7 +1975,48 @@ int getparamfile(char *paramfname, int phase)
     //  /* electron phonon coupling constant  */
     //  getparam("fd_g", &fd_g, PARAM_REAL, 1, 1);
     //}
-    
+
+    // MYMOD: Simon, 03.03.2025
+    else if (strcasecmp(token,"eps_filename")==0) {
+      /* File name for dielectric function */
+      getparam("eps_filename", eps_filename, PARAM_STR, 1, 255);
+    }
+    // END MYMOD
+
+    else if (strcasecmp(token,"cve_filename")==0) {
+      /* File name for heat capacity */
+      getparam("cve_filename", cve_filename, PARAM_STR, 1, 255);
+    }
+
+    else if (strcasecmp(token,"ee_filename")==0) {
+      /* File name for internal energy */
+      getparam("ee_filename", ee_filename, PARAM_STR, 1, 255);
+    }
+
+    else if (strcasecmp(token,"phase_filename")==0) {
+      /* File name for phase information */
+      getparam("phase_filename", phase_filename, PARAM_STR, 1, 255);
+    }
+
+    else if (strcasecmp(token,"g_filename")==0) {
+      /* File name for phase information */
+      getparam("g_filename", g_filename, PARAM_STR, 1, 255);
+    }
+    // MYMOD: Simon, 05.03.2025
+#ifndef TTT
+    else if (strcasecmp(token,"k12_filename")==0) {
+      /* File name for dielectric function */
+      getparam("k12_filename", k12_filename, PARAM_STR, 1, 255);
+    }
+#endif
+    // END MYMOD
+
+    else if (strcasecmp(token,"pe_filename")==0) {
+      /* File name for electronic pressure */
+      getparam("pe_filename", pe_filename, PARAM_STR, 1, 255);
+    }
+    // END MYMOD
+
     else if (strcasecmp(token, "fd_update_steps")==0){
       /* how many steps before averaging over atoms to update FD cells  */
       getparam("fd_update_steps", &fd_update_steps, PARAM_INT, 1, 1);
@@ -2026,7 +2067,6 @@ int getparamfile(char *paramfname, int phase)
         getparam("fd_min_atoms",&fd_min_atoms,PARAM_INT,1,1);
     }
 
-
 //MYMOD FÜR loadbalance mit ttm
 #ifdef TTM1D
      else if(strcasecmp(token,"vlatdim")==0){
@@ -2034,7 +2074,15 @@ int getparamfile(char *paramfname, int phase)
     }
      else if(strcasecmp(token,"vlatbuffer")==0){
         getparam("vlatbuffer",&vlatbuffer,PARAM_INT,1,1);
-    }    
+    }
+
+// MYMOD: Simon, 04.04.2025
+    else if (strcasecmp(token,"vlatdens")==0) {
+      /* Density of virtual lattice, should be equal to equilibrated density of material */
+      /* Unfortunately, this cannot be calculated from nrb_alat and atomic_weight without making an assumption of the lattice */
+      getparam("vlatdens", &vlatdens, PARAM_REAL, 1, 1);
+    }
+// END MYMOD    
 
      else if(strcasecmp(token,"ttmdimx")==0){
         getparam("ttmdimx",&ttmdimx,PARAM_INT,1,1);
@@ -2042,23 +2090,37 @@ int getparamfile(char *paramfname, int phase)
 #endif    
 //ENDOF MYMOD
 //MY MOD: FDTD (ACHTUNG: alles in SI-einheiten!)
-#if defined(FDTD) || defined(LASER) || defined(TMM)
+#if defined(FDTD) || defined(LASER) || defined(TMM) || defined(TM2)
 #ifdef TMM
 else if(strcasecmp(token,"tmm_threshold")==0){
         getparam("tmm_threshold",&tmm_absorption_threshold,PARAM_REAL,1,1);
     }    
 #endif    
-else if(strcasecmp(token,"I0")==0){
-        getparam("I0",&I0,PARAM_REAL,1,1);
+// MYMOD: Simon, 24.09.2025
+else if (strcasecmp(token, "tau_p")==0){
+      getparam("tau_p", &tau_p, PARAM_REAL, 1,1);
     }
-else if (strcasecmp(token, "laser_sigma_t")==0){
-      getparam("laser_sigma_t", &laser_sigma_t, PARAM_REAL, 1,1);
+else if (strcasecmp(token, "tau_p1")==0){
+      getparam("tau_p1", &tau_p1, PARAM_REAL, 1,1);
     }
+else if(strcasecmp(token,"fluence")==0){
+        getparam("fluence",&fluence,PARAM_REAL,1,1);
+
+	if (tau_p==0.0)
+	{
+	  error("tau_p is most likely given below fluence but has to be given before fluence!\n");
+	}
+
+	I0 = fluence / (tau_p * sqrt(M_PI / log(16)));
+    }
+#ifdef TM2
+    else if (strcasecmp(token, "lambda_ball")==0){
+      getparam("lambda_ball", &lambda_ball, PARAM_REAL, 1,1);
+    }
+#endif // TM2
+// END MYMOD
 else if (strcasecmp(token, "laser_t_0")==0){
       getparam("laser_t_0", &laser_t_0, PARAM_REAL, 1,1);
-    }
-else if (strcasecmp(token, "laser_sigma_t1")==0){
-      getparam("laser_sigma_t1", &laser_sigma_t1, PARAM_REAL, 1,1);
     }
 else if (strcasecmp(token, "laser_t_1")==0){
       getparam("laser_t_1", &laser_t_1, PARAM_REAL, 1,1);
@@ -2118,16 +2180,13 @@ else if(strcasecmp(token,"nrb_infile")==0){
     }
 #endif
 
-
-//MYMOD: LOCAL ORDER PARAMETER
-#ifdef LOD //lattice spacing
-    else if(strcasecmp(token,"alat")==0){
-        getparam("alat",&alat,PARAM_REAL,1,1);
-    }
-    else if(strcasecmp(token,"lodnorm")==0){
-        getparam("lodnorm",&lodnorm,PARAM_REAL,1,1);
+// MYMOD: Simon, 14.01.2025
+#ifdef LOP
+    else if(strcasecmp(token,"a0")==0){
+        getparam("a0", &a0, PARAM_REAL, 1, 1);
     }
 #endif
+// LOP
 
 // ***********************************
 // * MY MOD: shiftx_front,shiftx_rear
@@ -2386,10 +2445,6 @@ else if (strcasecmp(token, "laser_sigma_e")==0){
       /* area density of pulse energy (for rescaling method) */
       getparam("laser_sigma_e", &laser_sigma_e, PARAM_REAL, 1,1);
     }
-else if (strcasecmp(token, "laser_sigma_t")==0){
-      /* Pulse duration ( power is 1/e*P_max at t=t_0 +/- sigma_t ) */
-      getparam("laser_sigma_t", &laser_sigma_t, PARAM_REAL, 1,1);
-    }
 else if (strcasecmp(token, "laser_t_0")==0){
       /* time of maximum pulse intensity */
       getparam("laser_t_0", &laser_t_0, PARAM_REAL, 1,1);
@@ -2397,10 +2452,6 @@ else if (strcasecmp(token, "laser_t_0")==0){
 else if (strcasecmp(token, "laser_sigma_e1")==0){
       /* area density of pulse energy (for rescaling method) */
       getparam("laser_sigma_e1", &laser_sigma_e1, PARAM_REAL, 1,1);
-    }
-else if (strcasecmp(token, "laser_sigma_t1")==0){
-      /* Pulse duration ( power is 1/e*P_max at t=t_0 +/- sigma_t ) */
-      getparam("laser_sigma_t1", &laser_sigma_t1, PARAM_REAL, 1,1);
     }
 else if (strcasecmp(token, "laser_t_1")==0){
       /* time of maximum of second pulse intensity */
@@ -4678,10 +4729,8 @@ void broadcast_params() {
 #ifndef FDTD
   MPI_Bcast( &laser_sigma_e,    1, REAL,  0, MPI_COMM_WORLD);
 #endif
-  MPI_Bcast( &laser_sigma_t,    1, REAL,  0, MPI_COMM_WORLD);
   MPI_Bcast( &laser_t_0,        1, REAL,  0, MPI_COMM_WORLD);
   //MPI_Bcast( &laser_sigma_e1,    1, REAL,  0, MPI_COMM_WORLD);
-  MPI_Bcast( &laser_sigma_t1,    1, REAL,  0, MPI_COMM_WORLD);
   MPI_Bcast( &laser_t_1,        1, REAL,  0, MPI_COMM_WORLD);
 #ifdef LASERYZ
   MPI_Bcast( &laser_sigma_w_y,    1,    REAL,  0, MPI_COMM_WORLD);
@@ -4733,6 +4782,23 @@ MPI_Bcast( &filter_int,             1, MPI_INT, 0, MPI_COMM_WORLD);
 
 
 #ifdef TTM
+// MYMOD: Simon, 03.03.2025
+  MPI_Bcast( eps_filename, 255, MPI_CHAR, 0, MPI_COMM_WORLD);
+  MPI_Bcast( cve_filename, 255, MPI_CHAR, 0, MPI_COMM_WORLD);
+  MPI_Bcast( ee_filename, 255, MPI_CHAR, 0, MPI_COMM_WORLD);
+  MPI_Bcast( phase_filename, 255, MPI_CHAR, 0, MPI_COMM_WORLD);
+
+#ifdef TFM
+  MPI_Bcast( k12_filename, 255, MPI_CHAR, 0, MPI_COMM_WORLD);
+#endif
+
+  MPI_Bcast( pe_filename, 255, MPI_CHAR, 0, MPI_COMM_WORLD);
+
+#ifdef TTT
+  MPI_Bcast( g_filename, 255, MPI_CHAR, 0, MPI_COMM_WORLD);
+#endif
+// END MYMOD
+
   //MPI_Bcast( &fd_g,     1, REAL,    0, MPI_COMM_WORLD);
   MPI_Bcast( &fd_update_steps,1, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Bcast( &fd_ext,       DIM, MPI_INT, 0, MPI_COMM_WORLD);
@@ -4744,6 +4810,7 @@ MPI_Bcast( &filter_int,             1, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Bcast( &ttm_int,        1, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Bcast( &init_t_el,      1, REAL,    0, MPI_COMM_WORLD);
   MPI_Bcast( &fix_t_el,	      1, MPI_INT, 0, MPI_COMM_WORLD);
+ 
 /////////MY MOD
   MPI_Bcast( &fd_min_atoms,   1, MPI_INT, 0, MPI_COMM_WORLD);
 #if defined(FDTD) || defined(LASER) || defined(TMM)
@@ -4752,12 +4819,17 @@ MPI_Bcast( &filter_int,             1, MPI_INT, 0, MPI_COMM_WORLD);
 
   MPI_Bcast( &atomic_weight,  1, REAL,0, MPI_COMM_WORLD);
   MPI_Bcast( &atomic_charge,  1, REAL,0, MPI_COMM_WORLD);
-#if defined(FDTD) || defined(LASER) || defined(TMM)
+#if defined(FDTD) || defined(LASER) || defined(TMM) || defined(TM2)
+// MYMOD: Simon, 13.10.2025
+#ifdef TM2
+  MPI_Bcast (&lambda_ball,    1, REAL, 0, MPI_COMM_WORLD);
+#endif // TM2
+// END MYMOD
+  MPI_Bcast( &fluence,        1, REAL, 0, MPI_COMM_WORLD);
   MPI_Bcast( &I0,             1, REAL,0, MPI_COMM_WORLD);
-  MPI_Bcast( &laser_sigma_t,    1, REAL,  0, MPI_COMM_WORLD);
+  MPI_Bcast( &tau_p,          1, REAL, 0, MPI_COMM_WORLD);
   MPI_Bcast( &laser_t_0,        1, REAL,  0, MPI_COMM_WORLD);
-
-  MPI_Bcast( &laser_sigma_t1,    1, REAL,  0, MPI_COMM_WORLD);
+  MPI_Bcast( &tau_p1,            1, REAL,  0, MPI_COMM_WORLD);
   MPI_Bcast( &laser_t_1,        1, REAL,  0, MPI_COMM_WORLD);
   MPI_Bcast( &lambda,           1, REAL,0, MPI_COMM_WORLD);
 #ifdef TMM
@@ -4770,6 +4842,10 @@ MPI_Bcast( &filter_int,             1, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Bcast( &vlatdim,             1, MPI_INT,0, MPI_COMM_WORLD);
   MPI_Bcast( &vlatbuffer,          1, MPI_INT,0, MPI_COMM_WORLD);
 
+// MYMOD: Simon, 04.04.2025
+  MPI_Bcast( &vlatdens,       1, REAL,    0, MPI_COMM_WORLD);
+// END MYMOD
+
 #endif
 #ifdef FDTD
   MPI_Bcast( &srcw,             1, REAL,0, MPI_COMM_WORLD);
@@ -4778,11 +4854,12 @@ MPI_Bcast( &filter_int,             1, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Bcast( &Sc,	        1, REAL,0,MPI_COMM_WORLD);
 #endif //FDTD
 #endif /* TTM */
-//MYMOD: LOCAL ORDER PARAM
-#ifdef LOD
- MPI_Bcast( &alat,    1, REAL,0, MPI_COMM_WORLD);
- MPI_Bcast( &lodnorm,    1, REAL,0, MPI_COMM_WORLD);
+
+#ifdef LOP
+ MPI_Bcast( &a0,    1, REAL, 0, MPI_COMM_WORLD);
 #endif
+// LOP
+
 #ifdef DIRICHLET
  MPI_Bcast(&dirichlet_surfx,1,REAL,0,MPI_COMM_WORLD);
 #endif

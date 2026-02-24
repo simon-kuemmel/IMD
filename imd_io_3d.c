@@ -831,6 +831,13 @@ void write_atoms_config(FILE *out)
 #endif
         data[n++].r = EPOT_REF(p,i);
 #endif
+#ifdef LOP
+        data[n++].r = LOPI(p, i);
+        data[n++].r = LOPN(p, i);
+#endif
+#if defined(ANA) && !defined(NORHOH)
+        data[n++].r = ANA_RHO(p,i);
+#endif // ANA
 #if defined(EAM2) && !defined(NORHOH)
         data[n++].r = EAM_RHO(p,i);
 #ifdef EEAM
@@ -933,6 +940,19 @@ void write_atoms_config(FILE *out)
 #endif
         len += sprintf(outbuf+len, RESOL1, EPOT_REF(p,i));
 #endif
+#ifdef LOP
+        if (LOPN(p, i)==0){
+          len += sprintf(outbuf+len, RESOL1, 0.0);  // Avoid division by zero if an atom has no neighbours
+        }
+        else{
+          len += sprintf(outbuf+len, RESOL1, LOPI(p, i)/LOPN(p, i));
+        }
+        
+        len += sprintf(outbuf+len, " %d", LOPN(p, i));
+#endif
+#if defined(ANA) && !defined(NORHOH)
+        len += sprintf(outbuf+len, RESOL1, ANA_RHO(p,i));
+#endif // ANA
 #if defined(EAM2) && !defined(NORHOH)
         len += sprintf(outbuf+len, RESOL1, EAM_RHO(p,i));
 #ifdef EEAM
@@ -940,8 +960,8 @@ void write_atoms_config(FILE *out)
 #endif
 #endif
 #if defined(DIPOLE) || defined(KERMODE)
-	len += sprintf(outbuf+len, RESOL3, 
-		       DP_P_IND(p,i,X), DP_P_IND(p,i,Y), DP_P_IND(p,i,Z)); 
+        len += sprintf(outbuf+len, RESOL3, 
+               DP_P_IND(p,i,X), DP_P_IND(p,i,Y), DP_P_IND(p,i,Z)); 
 #endif	/* DIPOLE */
 #ifdef DAMP
         len += sprintf(outbuf+len, RESOL1, DAMPF(p,i));

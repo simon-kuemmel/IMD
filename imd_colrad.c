@@ -172,7 +172,7 @@ void do_colrad(double dt)
         Te0=node.temp*11604.5;
         Ti0=node.md_temp*11604.5;        
         rho0=node.dens;
-        ni0=rho0/AMU/26.9185; //1e28; //1e26/m^3 entspricht etwa 1e-4/Angtrom^3   
+        ni0=rho0/AMU/atomic_weight; //1e28; //1e26/m^3 entspricht etwa 1e-4/Angtrom^3   
 
         if(cdata->initial_equi==true)     
         {
@@ -507,7 +507,7 @@ void colrad_Saha_init(int i,int j,int k)
         Te0=node.temp*11604.5;
         Ti0=node.md_temp*11604.5;        
         rho0=node.dens; ///1e10;
-        ni0=rho0/AMU/26.9185; //1e28; //1e26/m^3 entspricht etwa 1e-4/Angtrom^3        
+        ni0=rho0/AMU/atomic_weight; //1e28; //1e26/m^3 entspricht etwa 1e-4/Angtrom^3        
         ne0=node.ne;
 
         Ith(y,0)=Te0;

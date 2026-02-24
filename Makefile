@@ -157,6 +157,7 @@ NBLSOURCES3D    = imd_geom_mpi_3d.c imd_comm_force_3d.c imd_fix_cells_3d.c imd_m
 
 PAIRSOURCES     = imd_forces.c
 EAM2SOURCES     = imd_forces_eam2.c
+ANASOURCES      = imd_forces_ana.c
 MEAMSOURCES     = imd_forces_meam.c
 CGSOURCES	= imd_cg.c
 COVALENTSOURCES = imd_forces_covalent.c
@@ -185,6 +186,8 @@ LASERSOURCES	= imd_laser.c
 TTMSOURCES	= imd_ttm.c imd_interpol.c fminbnd3.c
 
 FDTDSOURCES	= imd_fdtd.c
+
+TM2SOURCES	= imd_tm2.c
 
 TMMSOURCES	= imd_tmm.c
 
@@ -334,6 +337,32 @@ ifneq (,$(strip $(findstring eam,${MAKETARGET})))
   endif
 endif
 
+# ANA
+ifneq (,$(strip $(findstring ana,${MAKETARGET})))
+  ifneq (,$(strip $(findstring kim,${MAKETARGET})))
+    ERROR = "KIM is not compatible with ANA force routines"
+  endif
+  PP_FLAGS  += -DANA
+  
+  ifeq (,$(strip $(findstring nbl,${MAKETARGET})))
+    FORCESOURCES += ${ANASOURCES}
+  endif
+   
+  # ANAT (Te-dependent ANA)
+  ifneq (,$(strip $(findstring anat,${MAKETARGET})))
+    PP_FLAGS  += -DANAT
+
+    ifeq (,$(strip $(findstring nbl,${MAKETARGET})))
+      PP_FLAGS += -DASYMPOT
+    endif
+    
+    # ANATE (Te-dependent ANA)
+    ifneq (,$(strip $(findstring anate,${MAKETARGET})))
+      PP_FLAGS  += -DANATE
+    endif
+  endif
+endif
+
 # ADP
 ifneq (,$(strip $(findstring adp,${MAKETARGET})))
   ifneq (,$(strip $(findstring kim,${MAKETARGET})))
@@ -430,7 +459,7 @@ endif
 
 # TWO TEMPERATURE MODEL TTM
 ifneq (,$(strip $(findstring ttm,${MAKETARGET})))
-PP_FLAGS += -DTTM
+PP_FLAGS += -DTTM -DTTM1D
 SOURCES += ${TTMSOURCES}
 endif
 
@@ -445,11 +474,51 @@ ifneq (,$(strip $(findstring dirichlet,${MAKETARGET})))
 PP_FLAGS += -DDIRICHLET
 endif
 
+#TM2
+ifneq (,$(strip $(findstring tm2,${MAKETARGET})))
+PP_FLAGS += -DTM2
+SOURCES += ${TM2SOURCES}
+endif
+
 #TMM
 ifneq (,$(strip $(findstring tmm,${MAKETARGET})))
 PP_FLAGS += -DTMM
 SOURCES += ${TMMSOURCES}
 endif
+
+
+# Thomas-Fermi model
+ifneq (,$(strip $(findstring tfm,${MAKETARGET})))
+PP_FLAGS += -DTFM
+endif
+
+# Everything from DFT data
+ifneq (,$(strip $(findstring ttt,${MAKETARGET})))
+PP_FLAGS += -DTTT
+endif
+
+# Al parametrization
+ifneq (,$(strip $(findstring materialal,${MAKETARGET})))
+PP_FLAGS += -DMATERIALAL
+endif
+
+# Cu parametrization
+ifneq (,$(strip $(findstring materialcu,${MAKETARGET})))
+PP_FLAGS += -DMATERIALCU
+PP_FLAGS += -DLOP
+endif
+
+
+# BALLISTIC
+ifneq (,$(strip $(findstring ballistic,${MAKETARGET})))
+PP_FLAGS += -DBALLISTIC
+endif
+
+# ELECPRESS
+ifneq (,$(strip $(findstring elecpress,${MAKETARGET})))
+PP_FLAGS += -DELECPRESS
+endif
+
 
 #COLRAD
 ifneq (,$(strip $(findstring colrad,${MAKETARGET})))
@@ -469,10 +538,9 @@ PP_FLAGS += -DSIMD
 SOURCES += imd_forces_simd.c
 endif
 
-
-#local order parameter
-ifneq (,$(strip $(findstring lod,${MAKETARGET})))
-PP_FLAGS += -DLOD
+# Local order parameter
+ifneq (,$(strip $(findstring lop,${MAKETARGET})))
+PP_FLAGS += -DLOP
 endif
 
 #non-reflecting boundary conditions

@@ -38,7 +38,7 @@
 #define ADVMODE 1  // 0=NO ADVECTION, 1=DISCRETE FLUX SOLVER (PREDICT ATOMIC FLUXES)
 //#define ADVMODE2d  // FALLS y dim offen sein soll, müssen atomic-fluxes auch über kanten kommmuniziert werden
 
-#define VLATTICE   //VIRTUAL LATTICE HINTER DER PROBE. ACHTUNG: NUR 1D !!!!
+//#define VLATTICE   //VIRTUAL LATTICE HINTER DER PROBE. ACHTUNG: NUR 1D !!!!
                     //Falls gewünscht kann mit vlatbuffer die zahl
                     //der zellen (vom ende der probe gezählt) angegeben werden, die NICHT im TTM berücksichtigt
                     //werden soll, da diese als Puffer dienen 
@@ -57,17 +57,49 @@
                     //Bisher ist dieser Fall noch nicht eingetreten, aber bei sehr kleinen ttm-zellen kann das durchaus
                     //passieren.
 #define VLATTICE_STATIC
-// #define ELECPRESS   //wird nochmal in imd_integrate.c definiert
-#define DEBUG_LEVEL 1
 
+#define DEBUG_LEVEL 0
 
 
 #define TTMOUTBUFLEN 400  //Wird bei ttm-output im MPIIO-Modus gebraucht. Entspricht max. Zeilenlänge
 #define node  l1[i]       //Achtung: MPIIO-lange nicht mehr aktualisiert (z.b. fehlt colrad)
 #define node2 l2[i]
 
-#define RHOMIN       2
-//#define BALLISTIC    
+#define RHOMIN       30 // NOTE: This might be too small but should be fine. 
+                        // No extrapolation needed if this value is the same as the lowest density in the files
+                        
+#ifdef BALLISTIC
+#if defined(MATERIALAL)
+#define do_BALLISTIC do_BALLISTIC_AL
+#elif defined(MATERIALCU)
+#define do_BALLISTIC do_BALLISTIC_CU
+#else // Not MATERIALAL or MATERIALCU
+#define do_BALLISTIC do_BALLISTIC_TFM
+#endif // // Not MATERIALAL or MATERIALCU
+#endif // BALLISTIC
+
+#ifdef TFM
+#define getGamma getGamma_TFM
+#define getKappa getKappa_TFM
+#endif
+
+#ifdef TTT
+#ifdef MATERIALAL // Al
+#define getKappa getKappa_Al
+#define calc_y_bar calc_y_bar_Al
+#define calc_C calc_C_Al
+#define calc_beta calc_beta_Al
+#define calc_w calc_w_Al
+#endif // MATERIALAL
+#ifdef MATERIALCU // Cu
+#define getKappa getKappa_Cu
+#define calc_y_bar calc_y_bar_Cu
+#define calc_C calc_C_Cu
+#define calc_beta calc_beta_Cu
+#define calc_w calc_w_Cu
+#endif // MATERIALCU
+#endif
+
 
 // ****************************************************
 // *                MAIN FUNC
@@ -110,11 +142,24 @@ void calc_ttm()
 
   for (i = 0; i < diff_substeps; i++)
   {
+#ifdef TMM
     do_tmm(tau_DIFF); //Helmholtz-solver, tau_DIFF hat hier keine funktion mehr
+#endif
+#ifdef TM2
+    do_tm2(tau_DIFF);
+#endif
+
 #ifdef BALLISTIC
     do_BALLISTIC(tau_DIFF);
-#endif    
+#endif
+
+#ifdef TMM
     tmm_time += tau_DIFF * 10.18 * 1.0e-15; //in sek
+#endif
+#ifdef TM2
+    tm2_time += tau_DIFF * 10.18 * 1.0e-15; // in sek
+#endif
+
     do_DIFF(tau_DIFF);
     do_FILLMESH();
     ttm_fill_ghost_layers();            
@@ -123,6 +168,11 @@ void calc_ttm()
   //beginnend bei index=1 (brauche ghost-layer nicht)
   MPI_Allgather(&xiarr_local[1], local_fd_dim.x-2, MPI_DOUBLE, 
                 &xiarr_global[0],local_fd_dim.x-2, MPI_DOUBLE, cpugrid);
+
+#ifdef ANAT
+  MPI_Allgather(&t_el_ana_arr_local[1], local_fd_dim.x-2, MPI_DOUBLE,
+                &t_el_ana_arr_global[0],local_fd_dim.x-2, MPI_DOUBLE, cpugrid);
+#endif
 
   #ifdef ELECPRESS 
     do_electronic_pressure(); // elec press. bleibt für 1 MD-step näherungsweise konst.
@@ -135,7 +185,7 @@ void calc_ttm()
     {
           if(node.natoms >= fd_min_atoms && node.dens >= RHOMIN)
           {
-            node.U =EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * 26.9815 * AMU * J2eV; //eV/Atom      
+            node.U =EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * atomic_weight * AMU * J2eV; //eV/Atom      
             node2.U=node.U;
             tot_elec_energy_local += node.U*((double) node.natoms);
           }      
@@ -149,9 +199,16 @@ void calc_ttm()
 
 MPI_Reduce(&Eabs_local, &Eabs_global, 1, MPI_DOUBLE, MPI_SUM, 0, cpugrid);
 
+#ifdef TMM
 if(myid==0)
   printf("step:%d, It:%.2e, substeps:%d, Eabs:%.4e, t-t0:%.4e, Refl:%.4e, laser_active:%d \n",
           steps,I_t, diff_substeps, Eabs_global * eV2J / laser_spot_area,(tmm_time - laser_t_0) * 1e15,tmm_refl, laser_active);
+#endif
+#ifdef TM2
+if(myid==0)
+  printf("step:%d, It:%.2e, substeps:%d, Eabs:%.4e, t-t0:%.4e, Refl:%.4e, laser_active:%d \n",
+          steps,I_t, diff_substeps, Eabs_global * eV2J / laser_spot_area,(tm2_time - laser_t_0) * 1e15,tm2_refl, laser_active);
+#endif
 
 }
 
@@ -160,7 +217,6 @@ if(myid==0)
 // *********************************************************************************************************************************************
 void update_fd()
 {
-// printf("myid:%d,entered update_fd\n",myid);  
   int i, j, k, i_global, j_global, k_global;
   //int fd_tags=(local_fd_dim.x-2)*(local_fd_dim.y-2)*(local_fd_dim.z-2)+1; //every MPI-message needs to be unique
   int loopvar, l;
@@ -218,6 +274,10 @@ void update_fd()
     vcomxlocal[i]=vcomylocal[i]=vcomzlocal[i]=mdtemplocal[i]=0.0;
 
     xiarr_global[i]=0.0;
+
+#ifdef ANAT
+    t_el_ana_arr_global[i] = 0.0;
+#endif
   }
 
 
@@ -260,12 +320,16 @@ void update_fd()
     node.source = node2.source = 0.0;
 
     xiarr_local[i]=0.0;
+
+#ifdef ANAT
+    t_el_ana_arr_local[i] = 0.0;
+#endif
+
     node.dens=node2.dens=0;
   }
 // **********************
 //   1st LOOP OVER ATOMS
 // **********************
-// printf("myid:%d,1st loop start\n",myid);  
  for (k=0; k<NCELLS; ++k) 
  {
     p = CELLPTR(k);
@@ -319,9 +383,6 @@ void update_fd()
  // *************************
  //  REDUCE Buffer arrays
  // *************************
- // MPI_Barrier(cpugrid);
- // printf("myid:%d,before allred\n",myid);  
-
  MPI_Allreduce(natomslocal, natomsglobal, global_fd_dim.x, MPI_INT, MPI_SUM, cpugrid);
 
  MPI_Allreduce(fluxfromleftlocal,  fluxfromleftglobal,  global_fd_dim.x, MPI_INT, MPI_SUM, cpugrid); 
@@ -332,8 +393,6 @@ void update_fd()
  MPI_Allreduce(vcomxlocal, vcomxglobal, global_fd_dim.x, MPI_DOUBLE, MPI_SUM, cpugrid);
  MPI_Allreduce(vcomylocal, vcomyglobal, global_fd_dim.x, MPI_DOUBLE, MPI_SUM, cpugrid);
  MPI_Allreduce(vcomzlocal, vcomzglobal, global_fd_dim.x, MPI_DOUBLE, MPI_SUM, cpugrid);
-// printf("myid:%d,after allred\n",myid);  
- // MPI_Barrier(cpugrid);
 
 // ****************************** 
 //   vcom muss korrigiert werden
@@ -350,8 +409,6 @@ for(i_global=0;i_global<global_fd_dim.x;i_global++)
       vcomxglobal[i_global] /= totmass;
       vcomyglobal[i_global] /= totmass;
       vcomzglobal[i_global] /= totmass;
-// printf("myid:%d,vcomx:%f\n",myid,vcomxglobal[i_global]);
-
     }
     else
     {
@@ -361,7 +418,7 @@ for(i_global=0;i_global<global_fd_dim.x;i_global++)
     }  
 
 }
-// printf("myid:%d,2nd loop start\n",myid);  
+
 // **********************
 // 2nd loop for md-temp
 // **********************
@@ -397,12 +454,10 @@ MPI_Allreduce(mdtemplocal, mdtempglobal, global_fd_dim.x, MPI_DOUBLE, MPI_SUM, c
 // **********************************************************
 // Reconstruct  local TTM-lattice from global buffer arrays
 // *************************************************************
-// printf("myid:%d,reconstruct\n",myid);  
 for(i_global=0; i_global < global_fd_dim.x;i_global++)
 {
   int i_local=i_global+1-myid*(local_fd_dim.x-2);
 
-// printf("myid:%d,ig:%d,il:%d,max:%d\n",myid,i_global,i_local,local_fd_dim.x-1);
   if(i_local<1 || i_local > local_fd_dim.x-2)
     continue;
 
@@ -499,7 +554,7 @@ for(i_global=0; i_global < global_fd_dim.x;i_global++)
       node.natoms_old = node2.natoms_old = node.natoms;
       if (node.natoms >= fd_min_atoms && node.dens > RHOMIN)
       {
-         node.temp = node2.temp = node.md_temp;
+        node.temp = node2.temp = node.md_temp;
       }      
     } //for i
   }
@@ -519,8 +574,6 @@ for(i_global=0; i_global < global_fd_dim.x;i_global++)
 
   //das folgende kann sich jedoch auch bei statischem vlatbuffer ändern, wegen LB
   cur_vlattice_proc=(int) (((double) last_active_cell_global*num_cpus) / ((double) global_fd_dim.x));
-
-//printf("oldvlat:%d,nuvlat:%d, lastcell:%d\n",old_vlattice_proc, cur_vlattice_proc, last_active_cell_global.val);
   
   if(cur_vlattice_proc != old_vlattice_proc) //last-filled cell is now on other proc --> send to new proc
   {
@@ -555,7 +608,6 @@ void do_electronic_pressure(void)
 {
   int i_global;
 
-    
   //erstmal clearen
   for(i_global=0; i_global < global_fd_dim.x;i_global++)
   {
@@ -570,7 +622,7 @@ void do_electronic_pressure(void)
     if(i<1 || i > local_fd_dim.x-2)
       continue;
 
-    if(node.dens< RHOMIN || node.natoms < fd_min_atoms) continue;
+    if(node.dens < RHOMIN || node.natoms < fd_min_atoms) continue;
     #ifdef VLATTICE
       if(i_global > last_active_cell_global)
         continue;    
@@ -614,15 +666,11 @@ void do_electronic_pressure(void)
     if(steps>1)
     {
       epress_deriv[i_global]=(epress_global[xmax]-epress_global[xmin])/2.0/fd_h.x/(node.natoms/fd_vol);
-      // printf("myid:%d,ig:%d, epderiv:%.4e,p+1:%.4e,p-1:%.4e,te:%.4e\n",
-      //         myid,i_global,epress_deriv[i_global],
-      //         epress_global[xmax],epress_global[xmin],node.temp);
     }
-
-
   }  
 }
 #endif  
+
 // ***************************************************************************************************************************
 // * do_FILLMESH computes wide-range electronic transport and optical properties of fd-cells
 // ****************************************************************************************************************************
@@ -657,12 +705,19 @@ if(i_global > last_active_cell_global)
       if(i_global==first_active_cell_global)
       {
         if(steps< DENSHOTFIXSTEP)
-          node.dens=node2.dens=MAX(node2.dens,2680);
+#if defined(MATERIALAL)
+          node.dens=node2.dens=MAX(node2.dens, 2475);
+#elif defined(MATERIALCU)
+	  node.dens=node2.dens=MAX(node2.dens, 8628);
+#else
+          node.dens=node2.dens=MAX(node2.dens, 2680);
+#endif // MATERIALAL
       }
 #endif          
           //////////////////////////////////////////////////////////////          
           //           IONISATIONSGRAD UND ELEK.DICHTE
           ////////////////////////////////////////////////////////////// 
+#ifdef TFM
 #ifndef COLRAD          
           node.Z=MeanCharge(node.temp*11604.5, node.dens, atomic_charge, atomic_weight,i,j,k);
           // node.Z=QfromT(node.temp,node.dens); //Möglichkeit zur Interpolation aus Tabelle, falls More-Fit ungenügend
@@ -675,16 +730,22 @@ if(i_global > last_active_cell_global)
           }
 #endif
           node.ne = node.Z * node.dens / (atomic_weight * AMU);
-          node2.ne = node.ne;
 #endif
+#endif /* TFM*/
+
+#ifdef TTT
+          node.Z = 0.0;
+          node.ne = 0.0;
+#endif
+          node2.ne = node.ne;
           //////////////////////////////////////////////////////////////          
           //                      Wärmekapazität
           //////////////////////////////////////////////////////////////      
 #if EOSMODE == 1          
-            node.Ce = EOS_cve_from_r_te(node.dens, node.temp * 11604.5); //Interpol.Tabelle                    
+            node.Ce = EOS_cve_from_r_te(node.dens, node.temp * 11604.5); //Interpol.Tabelle
 #else          
             node.Ce=  FEG_cve_from_ne_te(node.dens, node.ne,node.temp*11604.5);
-            // pritf("rho:%.4e,temp:%.4e, ne:%.4e,Cv:%.4e,\n",node.dens,node.temp,node.ne,)
+            // printf("rho:%.4e,temp:%.4e, ne:%.4e,Cv:%.4e,\n",node.dens,node.temp,node.ne,)
 #endif
           node2.Ce=node.Ce;
 
@@ -699,20 +760,13 @@ if(i_global > last_active_cell_global)
           //////////////////////////////////////////////////////////////          
           //                WÄRMELEITFÄHIGKEIT 
           //////////////////////////////////////////////////////////////          
+#ifdef TFM
           node.fd_k = getKappa(node.temp, node.md_temp, node.ne, node.Z); //Hardcoding ist faster
+#endif
+#ifdef TTT
+          node.fd_k = getKappa(node.temp, node.md_temp, node.dens, i_global);
+#endif
           node2.fd_k = node.fd_k;
-
-          //Möglichkeit zur trikubischen Interpolation aus Tablle --> Beliebiges Material 
-          //Dasselbe kann für Elek.phonon-Kopplung über einfaches copy/paste ergänzt werden
-          /* //TRIKUBISCHE INTERPOLATION AUS TABELLE // trikub. interpol ist recht langsam 
-           node.fd_k=KappaInterpol(node.dens,node.temp,node.md_temp);
-           if(node.fd_k==-1.0)
-           {
-              printf("steps:%d,proc:%d,i:%d,j:%d,k:%d, ERROR during KappaInterpol in FILLMESH, Te:%f (eV), Ti:%f (eV) ,dens:%f (kg/m^3),atoms:%d\n",
-                      steps,myid,i,j,k,node.temp,node.md_temp,node.dens,node.natoms);
-              error("ERROR during KappaInterpol in FILLMESH");
-           }
-          */
 
 #if DEBUG_LEVEL>0  
           //ACHTUNG: Das ist nur bei Hardcoding noetig. Bei Interpolation, sollte die Interpol-Funktion error-check machen
@@ -728,8 +782,14 @@ if(i_global > last_active_cell_global)
           //////////////////////////////////////////////////////////////   
           //                   GAMMA  (KOPPL.CONST)
           //////////////////////////////////////////////////////////////                    
+#ifdef TFM
           node.fd_g = getGamma(node.temp, node.md_temp, node.ne, node.Z);
+#endif
+#ifdef TTT
+          node.fd_g = EOS_g_from_r_te(node.dens, node.temp * 11604.5); // Interpolation
+#endif
           node2.fd_g = node.fd_g;
+      
           //NaN gamma
 #if DEBUG_LEVEL>0
           if (isnan(node.fd_g) != 0 || node.fd_g < 0)
@@ -740,7 +800,6 @@ if(i_global > last_active_cell_global)
             error(errstr);
           }
 #endif
-
 
 
           //////////////////////////////////////////////////////////////          
@@ -767,30 +826,30 @@ if(i_global > last_active_cell_global)
           if (node.natoms >= fd_min_atoms && node.dens > RHOMIN)
           {        
 #if EOSMODE==1               
-             node.U =EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * 26.9815 * AMU * J2eV; // eV/Atom
+             node.U =EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * atomic_weight * AMU * J2eV; // eV/Atom
              node2.U=node.U;
 
              //PLAUSIBILITY EOS CHECK:
-             double echeck= EOS_ee_from_r_te(node.dens, node.temp * 11604.5)*26.9815 * AMU * J2eV;
-             double tcheck = EOS_te_from_r_ee(node.dens, echeck/26.9815/AMU * eV2J) / 11604.5;
+             double echeck= EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * atomic_weight * AMU * J2eV;
+             double tcheck = EOS_te_from_r_ee(node.dens, echeck/atomic_weight/AMU * eV2J) / 11604.5;
              double tinit=node.temp;
 
              if(ABS(tcheck -tinit) > tinit*0.01) // 1% unterschied
              {
                char errstr[255];
-
+               
                sprintf(errstr,"ERROR: EOS Plausibility check failed, TfromU != Tinit. Tinit:%.4e, TfromU:%.4e\n"
                                "Maybe Interpolation table too sparse or increase tolerance",tinit,tcheck); 
                error(errstr);
              }
 #else          
 //ACHTUNG: gsl_fermi_integral schwankt extrem  
-            node.U =FEG_ee_from_r_ne_te(node.dens, node.ne, node.temp * 11604.5) * 26.9815 * AMU * J2eV; // eV/Atom
+            node.U =FEG_ee_from_r_ne_te(node.dens, node.ne, node.temp * 11604.5) * atomic_weight * AMU * J2eV; // eV/Atom
             node2.U=node.U;
 
              //PLAUSIBILITY EOS CHECK:
-             double echeck= FEG_ee_from_r_ne_te(node.dens, node.ne, node.temp * 11604.5)*26.9815 * AMU * J2eV;
-             double tcheck = FEG_te_from_r_ne_ee(node.dens, node.ne, echeck/26.9815/AMU * eV2J) / 11604.5;
+             double echeck= FEG_ee_from_r_ne_te(node.dens, node.ne, node.temp * 11604.5) * atomic_weight * AMU * J2eV;
+             double tcheck = FEG_te_from_r_ne_ee(node.dens, node.ne, echeck/atomic_weight/AMU * eV2J) / 11604.5;
              double tinit=node.temp;
 
              if(ABS(tcheck -tinit) > tinit*0.15) // 5% unterschied
@@ -827,16 +886,27 @@ if(i_global > last_active_cell_global)
           
           for(i=0;i<vlatdim;i++)
           {
+#ifdef TFM
             vlattice1[i].Z= MeanCharge(vlattice1[i].temp*11604.5, vlattice1[i].dens, atomic_charge, atomic_weight,i,1,1);
             vlattice1[i].ne= vlattice1[i].Z * vlattice1[i].dens / (atomic_weight * AMU);
-            vlattice1[i].fd_k = getKappa(vlattice1[i].temp,vlattice1[i].md_temp, vlattice1[i].ne, vlattice1[i].Z); 
+            vlattice1[i].fd_k = getKappa(vlattice1[i].temp, vlattice1[i].md_temp, vlattice1[i].ne, vlattice1[i].Z); 
+#endif
+#ifdef TTT
+            vlattice1[i].Z = 0.0;
+            vlattice1[i].ne = 0.0;
+            vlattice1[i].fd_k = getKappa(vlattice1[i].temp, vlattice1[i].md_temp, vlattice1[i].dens, -1);
+#endif
 #if EOSMODE==1
             vlattice1[i].Ce = EOS_cve_from_r_te(vlattice1[i].dens, vlattice1[i].temp * 11604.5);
 #else
             vlattice1[i].Ce = FEG_cve_from_ne_te(vlattice1[1].dens, vlattice1[i].ne, vlattice1[i].temp * 11604.5);
 #endif
-            vlattice1[i].fd_g= getGamma(vlattice1[i].temp, vlattice1[i].md_temp, vlattice1[i].ne, vlattice1[i].Z); 
-
+#ifdef TFM
+            vlattice1[i].fd_g = getGamma(vlattice1[i].temp, vlattice1[i].md_temp, vlattice1[i].ne, vlattice1[i].Z); 
+#endif
+#ifdef TTT
+            vlattice1[i].fd_g = EOS_g_from_r_te(vlattice1[i].dens, vlattice1[i].temp * 11604.5);
+#endif
             vlattice2[i].Z=vlattice1[i].Z;
             vlattice2[i].ne=vlattice1[i].ne;
             vlattice2[i].fd_k=vlattice1[i].fd_k;
@@ -862,7 +932,6 @@ void do_COMMFLUX(void)
 #endif
   int i, j, k, i_global, j_global, k_global;
 #if DEBUG_LEVEL>1
-//  if(DEBUG_LEVEL>0)
   printf("steps:%d,proc:%d,entered do_COMMFLUX\n", steps, myid);
 #endif
 
@@ -942,7 +1011,6 @@ void do_COMMFLUX(void)
   }
 
 #if DEBUG_LEVEL>1
-//  if(DEBUG_LEVEL>0)
   printf("proc:%d,steps:%d,do_COMMFLUX complete\n", myid, steps);
 #endif
 
@@ -958,7 +1026,6 @@ void init_ttm()
   cell *p;
   if (myid == 0)
     printf("imdrestart=%d\n", imdrestart);
-
 
   global_fd_dim.x=ttmdimx; //User supplied
   if( global_fd_dim.x % num_cpus != 0)
@@ -978,19 +1045,34 @@ void init_ttm()
 
   fd_vol = fd_h.x * fd_h.y * fd_h.z;
   max_dt_ttm = timestep / ((double) fd_n_timesteps); //nur zu beginn...im weiteren verlauf adaptiv
-  neighvol = pow(sqrt(pair_pot.end[0]), 3.0) * 4.0 / 3.0 * M_PI;
 
+#ifndef ANA
+  neighvol = pow(sqrt(pair_pot.end[0]), 3.0) * 4.0 / 3.0 * M_PI;
+#else  // ANA
+  neighvol = pow(sqrt(ana_cutoff * ana_cutoff), 3.0) * 4.0 / 3.0 * M_PI;
+#endif
 
   /* Time to initialize our FD lattice... */
   l1 = (ttm_Element*) malloc( local_fd_dim.x * sizeof(ttm_Element) );
   l2 = (ttm_Element*) malloc( local_fd_dim.x * sizeof(ttm_Element) );
-
 
   // ******************************************
   // * AUXILIARAY ARRAYS FOR allreduce
   // ********************************************
   xiarr_global=(double*) malloc( global_fd_dim.x * sizeof(double)); //damit xi auf allen procs vorhanden ist!
   xiarr_local=(double*) malloc(  local_fd_dim.x * sizeof(double)); //damit xi auf allen procs vorhanden ist!
+
+#ifdef ANAT
+  t_el_ana_arr_global = (double*) malloc( global_fd_dim.x * sizeof(double));
+  t_el_ana_arr_local = (double*) malloc( local_fd_dim.x * sizeof(double));
+#endif
+
+#ifdef LOP
+  lopi_arr_global = (double*) malloc( global_fd_dim.x * sizeof(double));
+  lopi_arr_local = (double*) malloc( global_fd_dim.x * sizeof(double));
+  lopn_arr_global = (int*) malloc( global_fd_dim.x * sizeof(integer));
+  lopn_arr_local = (int*) malloc( global_fd_dim.x * sizeof(integer));
+#endif // LOP
 
   alloc1darr(double, vcomxlocal, global_fd_dim.x);
   alloc1darr(double, vcomxglobal, global_fd_dim.x);
@@ -1029,7 +1111,7 @@ if(myid==0)
 }
 #endif    
 
-  #ifdef VLATTICE //NUR 1D!!! (global_fd_dim.y und global_fd_dim.z=1)
+#ifdef VLATTICE //NUR 1D!!! (global_fd_dim.y und global_fd_dim.z=1)
   vlattice1= (ttm_Element*) malloc(sizeof(ttm_Element)* vlatdim);
   vlattice2= (ttm_Element*) malloc(sizeof(ttm_Element)* vlatdim);
 
@@ -1039,7 +1121,7 @@ if(myid==0)
     vlattice1[i].temp=vlattice2[i].temp=0.0264;
     vlattice1[i].md_temp=vlattice2[i].md_temp=0.0264;    
   }
-  #endif
+#endif
 
  for (k=0; k<NCELLS; ++k) 
  {
@@ -1047,7 +1129,7 @@ if(myid==0)
     for (i=0; i<p->n; ++i) 
     {
             
-      int i_global=(int) (ORT(p,i,X)/fd_h.x) ;
+      int i_global=(int) (ORT(p,i,X)/fd_h.x);
       int i_local=i_global+1-myid*(local_fd_dim.x-2);
 
       if(i_local> -1 && i_local< local_fd_dim.x+1 )
@@ -1063,7 +1145,7 @@ if(myid==0)
   {
     node2.source = node.source = 0.0;
     node2.fd_k = node.fd_k = 0;
-    node.fd_g = node.fd_g = 0;
+    node2.fd_g = node.fd_g = 0;
     node2.proc = node.proc = myid;
     node2.xi = node.xi = 0.0;
     node2.ne = node.ne = 0.0;
@@ -1073,6 +1155,11 @@ if(myid==0)
     node2.natoms_old = node.natoms_old = 0;
     node2.U = node.U = 0.0;        
     xiarr_local[i]=0.0;
+
+#ifdef ANAT
+    t_el_ana_arr_local[i] = 0.0;
+#endif
+
     #ifdef FDTD
     int bar;
     for (bar = 0; bar < 6; bar++)
@@ -1127,11 +1214,18 @@ if(myid==0)
   // * READ AND BCAST INTERPOLATION TABLES
   // ******************************************  
 #if EOSMODE==1
-  nn_read_table(&intp_cve_from_r_te, "../EOS_cve_from_r_te.txt");
-  nn_read_table(&intp_ee_from_r_tesqrt, "../EOS_ee_from_r_tesqrt.txt");
-  nn_read_table(&intp_phase_from_r_ti, "../EOS_phase_from_r_ti.txt");
+  nn_read_table(&intp_cve_from_r_te, cve_filename);
+  nn_read_table(&intp_ee_from_r_tesqrt, ee_filename);
+
+#ifdef TFM
+  nn_read_table(&intp_phase_from_r_ti, phase_filename);
+#endif
+#ifdef TTT
+  nn_read_table(&intp_g_from_r_te, g_filename);
+#endif
+
 #ifdef ELECPRESS
-  nn_read_table(&intp_pe_from_r_te, "../EOS_pe_from_r_te.txt");
+  nn_read_table(&intp_pe_from_r_te, pe_filename);
 #endif  
 #endif
 
@@ -1179,6 +1273,12 @@ if(myid==0)
     if (myid == 0)
       printf("t_SI:%.4e s\n", t_SI);
 #endif
+
+// MYMOD: Simon, 25.09.2025
+#ifdef TM2
+    tm2_time=(double) imdrestart * (double) checkpt_int * timestep * 10.18 / 1.0e15;
+#endif
+// END MYMOD
 
 #ifdef TMM
     tmm_time=(double) imdrestart * (double) checkpt_int * timestep * 10.18 / 1.0e15;
@@ -1270,12 +1370,12 @@ void do_ADV(double tau)
           if(node.natoms >= fd_min_atoms && node.dens > RHOMIN)
           {
 #if EOSMODE==1            
-            node2.temp = EOS_te_from_r_ee(node.dens, node2.U / (26.9815 * AMU * J2eV)) / 11604.5;
+            node2.temp = EOS_te_from_r_ee(node.dens, node2.U / (atomic_weight * AMU * J2eV)) / 11604.5;
 #else
             node.Z=MeanCharge(node.temp*11604.5, node.dens, atomic_charge, atomic_weight,i,j,k);
             node.ne = node.Z * node.dens / (atomic_weight * AMU); //Assumption: Quasi-neutrality condition
             node2.ne = node.ne;            
-            node2.temp=  FEG_te_from_r_ne_ee(node.dens,node.ne, node2.U / (26.9815 * AMU * J2eV)) / 11604.5;
+            node2.temp=  FEG_te_from_r_ne_ee(node.dens,node.ne, node2.U / (atomic_weight * AMU * J2eV)) / 11604.5;
 #endif     
 
           }     
@@ -1408,29 +1508,27 @@ if(i_global > last_active_cell_global)
         //Interne Energie muss noch geupdatet werden (Falls fallback auf altes Schema)
 
 #if EOSMODE==1            
-        node.U = node2.U= EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * 26.9815 * AMU * J2eV; // eV/Atom
+        node.U = node2.U= EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * atomic_weight * AMU * J2eV; // eV/Atom
 #else
-        node.U=node2.U=FEG_ee_from_r_ne_te(node.dens,node.ne,node.temp*11604.5) * 26.9815 * AMU * J2eV; // eV/Atom
+        node.U=node2.U=FEG_ee_from_r_ne_te(node.dens,node.ne,node.temp*11604.5) * atomic_weight * AMU * J2eV; // eV/Atom
 #endif
       } // endif isnan(temp) || temp<=0
 
     } // endif ..new cell activated...
 
     //node.natoms_old=node2.natoms_old=node.natoms; //nach update_fd verschoben
-
-
   } //for i
-
-
 }
 
-void do_BALLISTIC(double tau) // NUR ZUM TESTEN:ballistic transport und delayed thermalization
+
+#ifdef BALLISTIC
+void do_BALLISTIC_TFM(double tau) // NUR ZUM TESTEN:ballistic transport und delayed thermalization
 {
   int i;
   double tau_relax=50e-15; //in sec
   //if(steps*timestep*10.18*1e-15 > laser_t_0+3*tau_relax)
   if(tmm_time > laser_t_0+3*tau_relax)
-    return; //Thermalization complete 
+    return; //Thermalization complete
 
   if(myid==0)
   {
@@ -1439,16 +1537,16 @@ void do_BALLISTIC(double tau) // NUR ZUM TESTEN:ballistic transport und delayed 
     double tau_b=tau*10.18*1e-15; //sec.
     double vF=1.5e6; //fermi vel in m/s
     double alpha=tau_b*vF/(fd_h.x*1e-10);
- 
+
     for(i=2;i<global_fd_dim.x-1-1;i++)
-    {      
+    {
       q_stored[i]+=tmm_Qabs[i];
     }
 
     for(i=2;i<global_fd_dim.x-1;i++) //1st order upwind
     {
       q_stored_adv[i]=q_stored[i]-alpha*(q_stored[i]-q_stored[i-1]);
-    }  
+    }
     for(i=1;i<global_fd_dim.x-1;i++) //new qabs from qstored
     {
       double dq=q_stored_adv[i]/tau_relax*tau_b;
@@ -1458,13 +1556,136 @@ void do_BALLISTIC(double tau) // NUR ZUM TESTEN:ballistic transport und delayed 
     }
   }
 
-MPI_Scatter(&tmm_Qabs[0], local_fd_dim.x-2, MPI_DOUBLE, &tmm_Qabs_scat[0], local_fd_dim.x-2, MPI_DOUBLE, 0, cpugrid);
-for(i=1;i<local_fd_dim.x-1;i++)
-{
-  node.source=node2.source=tmm_Qabs_scat[i-1];
-}  
-  
+  MPI_Scatter(&tmm_Qabs[0], local_fd_dim.x-2, MPI_DOUBLE, &tmm_Qabs_scat[0], local_fd_dim.x-2, MPI_DOUBLE, 0, cpugrid);
+  for(i=1;i<local_fd_dim.x-1;i++)
+  {
+    node.source=node2.source=tmm_Qabs_scat[i-1];
+  }
 }
+
+
+void do_BALLISTIC_CU(double tau)
+{
+  int i;
+
+  // Material constants
+  double E_Fermi = 9.2; // in eV
+  double valence = 1.9; // TODO: 1.0 or 1.9?
+  double n_i = 0.086e30; // in 1/m^3 NOTE: Depends on the potential, here: experimental value
+  double Kappa_i = 401; // in W/m/K
+  double rho = 142763;  // in mol/m^3 NOTE: Depends on the potential, here: experimental value
+  double Cv = 23.74;  // in J/mol/K NOTE: Depends on the potential, here: experimental value
+
+  // Calculate tau_0
+  double omega_pl = sqrt(valence * n_i * ECHARGE * ECHARGE / (EMASS * ECONST));
+  double tau_0 = 128 / (M_PI * M_PI * sqrt(3) * omega_pl);
+
+  // Calculate L_diff
+  double a_T = Kappa_i / (rho * Cv);  // in m^2/s
+  double tau_p_eff = 6 * tau_p;
+  double L_diff = sqrt(a_T * tau_p_eff);
+
+  // Calculate L_opt
+  double eps_real_tmp, eps_imag_tmp;
+  tmm_get_epsilon_Cu(lambda, 0.025851, 0.025851, &eps_real_tmp, &eps_imag_tmp, 8628);
+  double frequency = 2 * M_PI * c0 / lambda;
+  double n_tmp = sqrt((eps_real_tmp + sqrt(eps_real_tmp*eps_real_tmp + eps_imag_tmp*eps_imag_tmp)) / 2);
+  double k_tmp = sqrt((- eps_real_tmp + sqrt(eps_real_tmp*eps_real_tmp + eps_imag_tmp*eps_imag_tmp )) / 2);
+  double R_RT = ((n_tmp-1) * (n_tmp-1) + k_tmp*k_tmp) / ((n_tmp+1)*(n_tmp+1) + k_tmp*k_tmp);
+  double alpha = 2 * frequency * k_tmp / c0;
+  double L_opt = 1 / alpha;
+
+  // Finally, calculate relaxation time (tau_relax)
+  double Delta_E = (1-R_RT) * fluence / ((L_diff + L_opt) * valence * n_i); // in J
+  Delta_E *= J2eV;
+  double tau_relax = tau_0 * E_Fermi * E_Fermi / (Delta_E * Delta_E);
+  tau_relax = 9.554e-15; // TODO: Remove
+
+  if (myid==0 && tmm_time==0.0)
+  {
+    printf("\nDelta E: %f eV, tau_relax: %f fs\n\n", Delta_E, tau_relax*1.0e15);
+  }
+
+  //if(steps*timestep*10.18*1e-15 > laser_t_0+3*tau_relax)
+  if(tmm_time > laser_t_0+3*tau_relax)
+    return; //Thermalization complete
+
+  if(myid==0)
+  {
+    int xmax,xmin;
+    //5th loop for ballistic transport: Annahme delta_t << delta_t_Ballistic = delta x/v_F ~ 1 fs
+    double tau_b=tau*10.18*1e-15; //sec.
+    double vF=sqrt(2 * E_Fermi * eV2J / EMASS); //fermi vel in m/s
+    double alpha=tau_b*vF/(fd_h.x*1e-10);
+
+    for(i=2;i<global_fd_dim.x-1-1;i++)
+    {
+      q_stored[i]+=tmm_Qabs[i];
+    }
+
+    for(i=2;i<global_fd_dim.x-1;i++) //1st order upwind
+    {
+      q_stored_adv[i]=q_stored[i]-alpha*(q_stored[i]-q_stored[i-1]);
+    }
+    for(i=1;i<global_fd_dim.x-1;i++) //new qabs from qstored
+    {
+      double dq=q_stored_adv[i]/tau_relax*tau_b;
+      q_stored_adv[i]-=dq;
+      q_stored[i]=q_stored_adv[i];
+      tmm_Qabs[i]=dq;     //overwrite with thermalized eng. only, keep stored eng. for advection
+    }
+  }
+
+  MPI_Scatter(&tmm_Qabs[0], local_fd_dim.x-2, MPI_DOUBLE, &tmm_Qabs_scat[0], local_fd_dim.x-2, MPI_DOUBLE, 0, cpugrid);
+  for(i=1;i<local_fd_dim.x-1;i++)
+  {
+    node.source=node2.source=tmm_Qabs_scat[i-1];
+  }
+}
+
+
+void do_BALLISTIC_CU_(double tau)
+{
+  int i;
+  double tau_relax=55.59e-15; //in sec // TODO
+  //if(steps*timestep*10.18*1e-15 > laser_t_0+3*tau_relax)
+  if(tmm_time > laser_t_0+3*tau_relax)
+    return; //Thermalization complete
+
+  if(myid==0)
+  {
+    int xmax,xmin;
+    //5th loop for ballistic transport: Annahme delta_t << delta_t_Ballistic = delta x/v_F ~ 1 fs
+    double tau_b=tau*10.18*1e-15; //sec.
+    double vF=1.799e6; //fermi vel in m/s // TODO
+    double alpha=tau_b*vF/(fd_h.x*1e-10);
+  
+    for(i=2;i<global_fd_dim.x-1-1;i++)
+    {
+      q_stored[i]+=tmm_Qabs[i];
+    }
+
+    for(i=2;i<global_fd_dim.x-1;i++) //1st order upwind
+    {
+      q_stored_adv[i]=q_stored[i]-alpha*(q_stored[i]-q_stored[i-1]);
+    }
+    for(i=1;i<global_fd_dim.x-1;i++) //new qabs from qstored
+    {
+      double dq=q_stored_adv[i]/tau_relax*tau_b;
+      q_stored_adv[i]-=dq;
+      q_stored[i]=q_stored_adv[i];
+      tmm_Qabs[i]=dq;     //overwrite with thermalized eng. only, keep stored eng. for advection
+    }
+  }
+
+  MPI_Scatter(&tmm_Qabs[0], local_fd_dim.x-2, MPI_DOUBLE, &tmm_Qabs_scat[0], local_fd_dim.x-2, MPI_DOUBLE, 0, cpugrid);
+  for(i=1;i<local_fd_dim.x-1;i++)
+  {
+    node.source=node2.source=tmm_Qabs_scat[i-1];
+  }
+}
+#endif
+
 // ****************************************************************************************************
 // *   DO A SINGLE DIFFUSION STEP HERE
 // *   tau gibt an, wie groß der ts sein soll
@@ -1481,7 +1702,7 @@ void do_DIFF(double tau)
   //nicht von der zahl der atome pro Zelle, muss auch xi umgeschrieben werden da sonst
   //zellen mit wenigen Atomen viel zu stark erhitzt werden!    
   //double xi_fac=fd_vol/3.0/((double) diff_substeps);///((double) node.natoms); //ORIGINAL
-  double xi_fac = 26.9815 * AMU / 3.0 * 1e30 / ((double) diff_substeps); //NEU
+  double xi_fac = atomic_weight * AMU / 3.0 * 1e30 / ((double) diff_substeps); //NEU
 
 
   double Ce; //specific heat
@@ -1495,7 +1716,6 @@ void do_DIFF(double tau)
 
 
 #if DEBUG_LEVEL>1
-//  if(DEBUG_LEVEL>0)
   printf("steps:%d,proc:%d,entered do_DIFF\n", steps, myid);
 #endif
   j_global=k_global=1;
@@ -1561,7 +1781,7 @@ if(i_global > last_active_cell_global)
      Ce = node.Ce; //eV/(eV*Angs^3)
     /***********************************************************************
           * Explicit diffusion with variable kappa   (Convervative formulation)  *
-    ************************************************************************/    
+    ************************************************************************/
     node2.temp=tau/Ce*
     ( 
       // dK/dx * d^2 T/dx^2
@@ -1572,6 +1792,107 @@ if(i_global > last_active_cell_global)
       -node.fd_g*(node.temp-node.md_temp)
       +node.source
     ) +node.temp;
+    
+#ifdef ANATE
+    // Correct node2.temp since some of electron energy has to go to lattice to keep electron temperature consistent while conserving energy
+    
+    // Fit parameters
+    double a_str_0 = 1.60501301e-01;
+    double a_str_1 = -1.92599127e-03;
+    double a_str_2 = 1.03781464e-06;
+    double a_str_3 = -3.30349029e-10;
+    double a_str_4 = 5.15687170e-14;
+    double a_str_5 = -3.82904616e-18;
+    double a_str_6 = 1.09890003e-22;
+
+    double b_0 = -5.74400163e-01;
+    double b_1 = 1.17091645e-03;
+    double b_2 = -6.60111246e-07;
+    double b_3 = 1.91081495e-10;
+    double b_4 = -2.87086630e-14;
+    double b_5 = 2.13759265e-18;
+    double b_6 = -6.24160311e-23;
+
+    double c_0 = -2.43325967e+00;
+    double c_1 = 2.58630071e-04;
+    double c_2 = -1.24538189e-07;
+    double c_3 = 4.21481399e-11;
+    double c_4 = -6.79160614e-15;
+    double c_5 = 5.04907110e-19;
+    double c_6 = -1.41695393e-23;
+
+    double gamma_fit = -1.4964991184341652;
+    double lambda_fit = -0.5135443236422533;
+    //double a_str_fit = a_str_0 + a_str_1*node.dens + a_str_2*pow(node.dens, 2) + a_str_3*pow(node.dens, 3) + a_str_4*pow(node.dens, 4) + a_str_5*pow(node.dens, 5) + a_str_6*pow(node.dens, 6);
+    double b_fit = b_0 + b_1*node.dens + b_2*pow(node.dens, 2) + b_3*pow(node.dens, 3) + b_4*pow(node.dens, 4) + b_5*pow(node.dens, 5) + b_6*pow(node.dens, 6);
+    double c_fit = c_0 + c_1*node.dens + c_2*pow(node.dens, 2) + c_3*pow(node.dens, 3) + c_4*pow(node.dens, 4) + c_5*pow(node.dens, 5) + c_6*pow(node.dens, 6);
+    
+    double Delta_E = (EOS_ee_from_r_te(node.dens, node.temp*11604.5) - EOS_ee_from_r_te(node2.dens, node2.temp*11604.5)) * atomic_weight * AMU * J2eV; //eV/Atom
+    
+    double A, B, C;
+    
+    if (node.temp<1.2 || node2.temp<1.2)  // Else, this part can be skipped since potential is kept constant
+    {
+      // First iteration
+      double A = gamma_fit/2 + c_fit;
+      double B = lambda_fit + b_fit;
+      double C = -gamma_fit*pow(node.temp, 2)/2 - lambda_fit*node.temp - b_fit*node.temp - c_fit*pow(node.temp, 2) - Delta_E;
+      
+      // Calculate the two possible new electron temperatures
+      double kBT_final_1 = (-B + sqrt(B*B - 4*A*C)) / (2*A);
+      double kBT_final_2 = (-B - sqrt(B*B - 4*A*C)) / (2*A);
+      
+      // Choose the one new electron temperature that is physically correct (T>0)
+      if (kBT_final_1<0)
+      {
+        node2.temp = kBT_final_2;
+      }
+      else
+      {
+        if (kBT_final_2<0)
+        {
+          node2.temp = kBT_final_1;
+        }
+        else
+        {
+          printf("node.temp: %f, node2.temp: %f, Delta_E: %f, kBT_final_1: %f, kBT_final_2: %f\n", node.temp, node2.temp, Delta_E, kBT_final_1, kBT_final_2);
+          error("kBT_final_1<0 and kBT_final_2<0 in first iteration (node.temp<1.2 or node2.temp<1.2)! This is not supposed to happen!");
+
+	  // TODO: We could use node2.temp=0.025851 as a fail safe
+        }
+      }
+      
+      // Second iteration if node2.temp>1.2
+      if (node2.temp>1.2)
+      {
+        A = gamma_fit/2;
+        B = lambda_fit;
+        C = b_fit*1.2 + c_fit*pow(1.2, 2) - gamma_fit*pow(node.temp, 2)/2 - lambda_fit*node.temp - b_fit*MIN(1.2, node.temp) - c_fit*pow(MIN(1.2, node.temp), 2) - Delta_E;
+        
+        // Calculate the two possible new electron temperatures
+        double kBT_final_1 = (-B + sqrt(B*B - 4*A*C)) / (2*A);
+        double kBT_final_2 = (-B - sqrt(B*B - 4*A*C)) / (2*A);
+        
+        // Choose the one new electron temperature that is physically correct (T>0)
+        if (kBT_final_1<0)
+        {
+          node2.temp = kBT_final_2;
+        }
+        else
+        {
+          if (kBT_final_2<0)
+          {
+            node2.temp = kBT_final_1;
+          }
+          else
+          {
+            printf("node.temp: %f, node2.temp: %f, Delta_E: %f, kBT_final_1: %f, kBT_final_2: %f\n", node.temp, node2.temp, Delta_E, kBT_final_1, kBT_final_2);
+            error("kBT_final_1<0 and kBT_final_2<0 in second iteration (node.temp<1.2 or node2.temp<1.2)! This is not supposed to happen!");
+          }
+        }
+      }
+    }
+#endif // ANATE
     
 
     //Folgende Zeile setzt vorraus, dass Cve und U kompatiblen Tabllen zugrunde liegen
@@ -1584,6 +1905,10 @@ if(i_global > last_active_cell_global)
 
     xiarr_local[i] += (node2.temp - node.md_temp) * xi_fac * node.fd_g / node.md_temp / node.dens;
     //xiarr_global soll auf allen procs (für alle ttm-zellen) vorhanden sein (für imd_integrate.c)
+    
+#ifdef ANAT
+    t_el_ana_arr_local[i] = node2.temp;
+#endif
 
 #if DEBUG_LEVEL > 0
     if(isnan(node2.temp) != 0 || isinf(node2.temp) != 0)
@@ -1608,8 +1933,20 @@ if(i_global > last_active_cell_global)
 
     int ilocal= last_active_cell_global+1-myid*(local_fd_dim.x-2);
 
+#ifdef TFM
     // Ci AUS GEOS: rho: 2.665655433e+03 temp: 3.000000000e+02 cvi: 8.589449886e+02           
     double Ci=8.589449886e+02;
+#endif
+    
+#ifdef TTT
+#ifdef MATERIALAL
+    double Ci = 897;  // From CRC handbook of chemistry and physics
+#endif // MATERIALAL
+#ifdef MATERIALCU
+    double Ci = 385; // From CRC handbook of chemistry and physics
+#endif // MATERIALCU
+#endif // TTT
+    
     Ci *= vlatdens; // J/(K*kg) --> J/K/m^3
     Ci *= 11604.5; // -->J/eV/m^3
     Ci *= 1e-30; // --> J/eV/Angs^3
@@ -1671,7 +2008,6 @@ if(i_global > last_active_cell_global)
 #endif
 
 #if DEBUG_LEVEL>1
-// if(DEBUG_LEVEL>0)
   printf("steps:%d,proc:%d,do_DIFF complete\n", steps, myid);
 #endif
 
@@ -1700,7 +2036,6 @@ void ttm_writeout(int number)
 
   char * ttmoutbuf = NULL;
   ttmoutbuf = (char*) calloc((local_fd_dim.x - 2) * (local_fd_dim.y - 2) * (local_fd_dim.z - 2) * TTMOUTBUFLEN, sizeof(char));
-  //ttmoutbuf=(char*) malloc((local_fd_dim.x-2)*(local_fd_dim.y-2)*(local_fd_dim.z-2)*300*sizeof(char));
   if (NULL == ttmoutbuf)
   {
     error("couldn't alloc mem for ttmoutbuf\n");
@@ -1710,7 +2045,6 @@ void ttm_writeout(int number)
   int  len_of_outbufline = 0;
   int  padding_len = 0;
   long l = 0;
-  //int l=0;
 
   for (i = 1; i < local_fd_dim.x - 1; i++)
   {
@@ -2190,9 +2524,9 @@ void ttm_read(int number)
 
 double fermi_E(double ne)
 {                             //IN: [1/m^3] OUT: [J]
-
   return HBAR * HBAR * pow(3.0 * M_PI * M_PI * ne, 2.0 / 3.0) / 2.0 / EMASS;
 }
+
 double fermi_T(double ne) {                             //IN: [1/m^3] OUT: [K]
   return 2.0 * fermi_E(ne) / (3.0 * BOLTZMAN);
 }
@@ -2200,10 +2534,12 @@ double fermi_T(double ne) {                             //IN: [1/m^3] OUT: [K]
 double omega_pl(double ne) {                            //IN: [1/m^3] OUT: [1/s]
   return sqrt(ne * ECHARGE * ECHARGE / EMASS / ECONST);
 }
+
 double bMin(double X, double omega_las, double Z, double ni, double Te) {       // OUT: [m]
   return MAX(Z * ECHARGE * ECHARGE / (BOLTZMAN * Te),
              HBAR / sqrt(2 * EMASS * BOLTZMAN * Te));
 }
+
 double bMax(double omega_las, double Z, double ni, double Te) {                 // OUT: [m]
   double teff = sqrt(Te * Te + fermi_T(ni * Z) * fermi_T(ni * Z));
   if(laser_active)
@@ -2212,6 +2548,7 @@ double bMax(double omega_las, double Z, double ni, double Te) {                 
     return MAX(r0(ni), sqrt(BOLTZMAN * teff / (EMASS)) / omega_pl(ni * Z));
   //ACHTUNG: Sobald laser aus --> omega_las=0
 }
+
 double coulomb_log(double X, double omega_las, double Z, double ni, double Te) { //OUTPUT in dimensionless^M
   return MAX(2.0, log(bMax(omega_las, Z, ni, Te) / bMin(X, omega_las, Z, ni, Te)));
 }
@@ -2223,14 +2560,13 @@ double ne_cr(double omega_las) {                // OUT: [1/m3]
   // omega_las * omega_las * ELECTRON_MASS / (ELECTRON_CHARGE * ELECTRON_CHARGE  * 4 * PI);
 }
 
-
 double fd_density(double natoms, double mass, double vol) { //OUTPUT in kg/m3
   return natoms    // number of atoms in the cell (can be gained by "ttmelement".natoms)
          *mass    // mass
          *AMU     // atomic mass unit
          / (vol * 1e-30);
-
 }
+
 double r0(double ni) {                                  //IN: [1/m3] OUT: [m]
   return pow(3.0 / (4 * M_PI * ni), 1.0 / 3.0);
 }
@@ -2304,13 +2640,12 @@ double nupl(double omega_las, double Z, double ni, double ne, double Te) //POVAR
   return 1.863839656495274e-40 * Z * ne * coulomb / pow(BOLTZMAN * Te, 1.5);
 }
 
+
 /**************************************
 * Kappa und Gamma nach Povar
 ***************************************/
-double getGamma(double Te, double Ti, double Ne, double Z) //POVAR
+double getGamma_TFM(double Te, double Ti, double Ne, double Z) //POVAR
 {
-
-//return 1.785961556211823e-04; //TESTCASE
   //ACHTUNG: gamma ist nach Povarnitsyn die Kopplungskonstante und NICHT der Wärmekap. Koeff
 
   Te *= 11604.5; //ECHARGE / BOLTZMAN;              // [eV] -> [K]
@@ -2320,7 +2655,7 @@ double getGamma(double Te, double Ti, double Ne, double Z) //POVAR
   double A2g = 20;
   double A3g = 0.25;
 
-  double  m_atom = 26.9815; //u
+  double  m_atom = atomic_weight; //u
 
   double Ni = Ne / Z;                                     // [1/m3]
   double EF = fermi_E(Ne);                                // [J]
@@ -2334,28 +2669,10 @@ double getGamma(double Te, double Ti, double Ne, double Z) //POVAR
   return gamma;
 }
 
-/*
-double KappaInterpol(double rho, double Te, double Ti)
-{
-  double lgTe = log10(Te);
-  double lgTi = log10(Ti);
-  double Kappa = do_tricubinterp(&kappa_interp, rho, lgTe, lgTi);
-  if (Kappa == -1) return -1;
-  return Kappa;
-}
-double NueffInterpol(double rho, double Te, double Ti)
-{
-  double lgTe = log10(Te);
-  double lgTi = log10(Ti);
-  double nueff = do_tricubinterp(&nueff_interp, rho, lgTe, lgTi);
-  if (nueff == -1) return -1;
-  return nueff;
-}
-*/
 
-double getKappa(double Te, double Ti, double Ne, double Z) //POVAR
+#ifdef TFM
+double getKappa_TFM(double Te, double Ti, double Ne, double Z) //POVAR
 {
-//return 1.933442e+01;  //TESTCASE
   //check for NaNs
 
   //Te *= ECHARGE / BOLTZMAN;             // [eV] -> [K]
@@ -2369,7 +2686,7 @@ double getKappa(double Te, double Ti, double Ne, double Z) //POVAR
   double A3t = 0.16;
   double A4t = 1.2;
 
-  //const double m_atom = 26.9815;
+  //const double m_atom = atomic_weight;
 
   //double rho = fd_density(natoms,m_atom,vol);       // [kg/m3]
   //double omega_las = (2.0 * M_PI * LIGHTSPEED / lambda);  // [1/s]
@@ -2397,6 +2714,274 @@ double getKappa(double Te, double Ti, double Ne, double Z) //POVAR
   //return kappa_wr * 10.18e-15 / (1e10 * BOLTZMAN);                // Convert from SI -> IMDu
   return kappa_wr * 0.073768115942029;
 }
+#endif /* TFM */
+
+
+#ifdef TTT
+#ifdef MATERIALAL
+double getKappa_Al(double Te, double Ti, double rho, int i)
+{
+  double E_Fermi = 11.1;  // in eV
+
+  double T_rt = 0.0252488;  // 293 K in eV
+  double T_m = 0.080439465748; // 933.5 / 11605 // Careful, this technically depends on the potential
+
+  double x_rt = 0.991638025594; // 2.71213 / 2.735
+  double x_m = 0.895795246801; // 2.45 / 2.735
+
+  double t_rt = 6 * T_rt / (pow(x_rt, 2/3) * E_Fermi);
+  double t_m = 6 * T_m / (pow(x_m, 2/3) * E_Fermi);
+
+  double a0 = 4.0e-4; // in m*K/W
+  double b0 = -0.91906;
+  double b1 = 0.79564;
+  double b2 = 0.13456;
+
+  double Kappa_rt = 237.0;  // in W / m / K
+  double Kappa_m = 89.3;
+
+  double x = 1;	// TODO: rho / 2475;  // rho / rho_0 with rho_0 = 2475 kg/m^3
+  double t = 6 * Te / (pow(x, 2/3) * E_Fermi);
+
+  double Kappa_se = x * (1 + b0 * sqrt(t) + b1 * t + b2 * t * t) / (a0 * t);
+
+  // Determine whether material is solid or not via phase boundary lines
+  int solid_bool = 1; // 1: Solid, 0: liquid // TODO: Use i to determine solid_bool
+
+  double Kappa_si;
+  if (solid_bool == 1)
+  {
+    double y_bar_x = calc_y_bar_Al(x);
+    double y_bar_x_rt = calc_y_bar_Al(x_rt);
+    double C_t = calc_C(t);
+    double C_t_rt = calc_C(t_rt);
+
+    Kappa_si = Kappa_rt * x * y_bar_x * T_rt * C_t / (x_rt * y_bar_x_rt * Ti * C_t_rt);
+  }
+  else // liquid
+  {
+    double C_t = calc_C(t_rt);
+    double C_tm = calc_C(t_m);
+    double beta = calc_beta(Ti);
+    double w_T_m = calc_w(T_m);
+    double w_Ti = calc_w(Ti);
+
+    Kappa_si = Kappa_m * C_t * pow(x, beta + 1) * w_T_m / (C_tm * pow(x_m, beta + 1) * w_Ti);
+  }
+
+  double Kappa_tot = 1 / (1 / Kappa_se + 1 / Kappa_si);
+  Kappa_tot *= 0.073768115942029; // Convert from W/(Km) to IMD units
+
+  return Kappa_tot;
+}
+
+
+double calc_y_bar_Al(double x)
+{
+  double a = 1.425;
+  double b = 1.359;
+
+  double zeta = (a - b) / (b + 1);
+
+  double y_bar = ((1 + zeta) * pow(x, 2*a + 1)) / (1 + zeta * pow(x, a + 1));
+
+  return y_bar;
+}
+
+
+double calc_C_Al(double T)
+{
+  double a0 = 68.745;
+  double a1 = 0.24284;
+  double a2 = 2.0;
+  double p1 = 0.27722;
+  double p2 = 2.34127;
+
+  double C = T * a0 * (1 + a1 * pow(T, p1)) / (1 + a2 * pow(T, p2));
+
+  return C;
+}
+
+
+double calc_beta_Al(double T)
+{
+  double Tc = 0.5601034; // 6500 K in eV
+  double beta = 2.0 / (1 + 0.1 * T / Tc);
+
+  return beta;
+}
+
+
+double calc_w_Al(double T)
+{
+  double Tc = 0.5601034; // 6500 K in eV
+
+  double w = 0.13381404 * (1 + 2.17823351 * T / Tc) / (1 + 0.66530391 * T / Tc);
+
+  return w;
+}
+#endif // MATERIALAL
+
+#ifdef MATERIALCU
+double getKappa_Cu(double Te, double Ti, double rho, int i_global)
+{
+  double E_Fermi = 9.2;	// in eV
+
+  double x = rho / 8761;  // rho / rho_0 with rho_0 = 8761 kg/m^3
+
+  double T_rt = 0.0252488;  // 293 K in eV
+  double T_m = 0.1006514714; // 1168.01 / 11604.5 // NOTE: This depends on the potential, this is the value of the unexcited ANA potential
+
+  double x_rt = 0.98481908458; // 8.628 / 8.761
+  double x_m = 0.9028649698; // 7.91 / 8.761
+
+  double t = 6 * Te / (x * E_Fermi);
+  double t_rt = 6 * T_rt / (x_rt * E_Fermi);
+  double t_m = 6 * T_m / (x_m * E_Fermi);
+
+  double a0 = 3.803e-04; // in m*K/W
+  double b0 = -1.9916;
+  double b1 = 1.353;
+  double b2 = 0.03954;
+
+  double Kappa_rt = 401;  // in W / m / K
+  double Kappa_m = 138.0;
+
+  double Kappa_se = pow(x, 4.0/3.0) * (1 + b0 * sqrt(t) + b1 * t + b2 * t * t) / (a0 * t);
+  
+  // Determine whether material is solid or not via phase boundary lines
+  int solid_bool; // 1: Solid, 0: liquid
+  double lopi_local;
+  double lop_thr;
+
+#ifdef NBL
+  lop_thr = 1.05;
+#else
+  lop_thr = 0.7;
+#endif
+
+  if (i_global==-1){
+    solid_bool = 1; // Used for VLATTICE, we assume it's solid
+  }
+  else{
+    lopi_local = lopi_arr_global[i_global];
+
+    if (lopi_local<0.7){
+      solid_bool = 1;
+    }
+    else{
+      solid_bool = 0;
+    }
+  }
+
+  // Calculate state-dependent properties
+  double Kappa_si;
+  if (solid_bool == 1)
+  {
+    double y_bar_x = calc_y_bar_Cu(x);
+    double y_bar_x_rt = calc_y_bar_Cu(x_rt);
+    double C_t = calc_C(t);
+    double C_t_rt = calc_C(t_rt);
+
+    Kappa_si = Kappa_rt * pow(x/x_rt, 4.0/3.0) * y_bar_x * T_rt * C_t / (y_bar_x_rt * Ti * C_t_rt);
+  }
+  else // liquid
+  {
+    double C_t = calc_C(t_rt);
+    double C_tm = calc_C(t_m);
+    double beta_Ti = calc_beta(Ti);
+    double beta_T_m = calc_beta(T_m);
+    double w_T_m = calc_w(T_m);
+    double w_Ti = calc_w(Ti);
+
+    Kappa_si = Kappa_m * C_t * pow(x, beta_Ti + 4.0/3.0) * w_T_m / (C_tm * pow(x_m, beta_T_m + 4.0/3.0) * w_Ti);
+  }
+
+  double Kappa_tot = 1 / (1 / Kappa_se + 1 / Kappa_si);
+  Kappa_tot *= 0.073768115942029; // Convert from W/(Km) to IMD units
+
+  return Kappa_tot;
+}
+
+
+double calc_y_bar_Cu(double x)
+{
+  double a = 1.826;
+  double b = 1.788;
+
+  double zeta = (a - b) / (b + 1);
+
+  double y_bar = ((1 + zeta) * pow(x, 2*a + 1)) / (1 + zeta * pow(x, a + 1));
+
+  return y_bar;
+}
+
+
+double calc_C_Cu(double T)
+{
+  double a1 = 11.202;
+  double a2 = 3.346;
+  double p1 = 2.0;
+  double p2 = 2.05;
+
+  double C = T * (1 + a1 * pow(T, p1)) / (1 + a2 * pow(T, p2));
+
+  return C;
+}
+
+
+double calc_beta_Cu(double T)
+{
+  double Tc = 0.6893877; // 8000 K in eV
+  double beta = 2.4 / (1 + 0.35 * T / Tc);
+
+  return beta;
+}
+
+
+double calc_w_Cu(double T)
+{
+  double Tc = 0.6893877; // 8000 K in eV
+
+  double w = 0.0043 * (1 + 126 * T / Tc) / (1 + 0.86 * T / Tc);
+
+  return w;
+}
+#endif // MATERIALCU
+#endif // TTT
+
+
+double KappaInterpol(double rho, double Te, double Ti)
+{
+  double lgTe = log10(Te);
+  double lgTi = log10(Ti);
+  double Kappa = do_tricubinterp(&kappa_interp, rho, lgTe, lgTi);
+  if (Kappa == -1) return -1;
+  return Kappa;
+}
+
+
+double GammaInterpol(double rho, double Te, double Ti)
+{
+  double lgTe = log10(Te);
+  double lgTi = log10(Ti);
+  double Gamma = do_tricubinterp(&gamma_interp, rho, lgTe, lgTi);
+  if (Gamma == -1) return -1;
+  return Gamma;
+}
+
+
+/*
+double NueffInterpol(double rho, double Te, double Ti)
+{
+  double lgTe = log10(Te);
+  double lgTi = log10(Ti);
+  double nueff = do_tricubinterp(&nueff_interp, rho, lgTe, lgTi);
+  if (nueff == -1) return -1;
+  return nueff;
+}
+*/
+
 
 /*************************************************************
 * MY MOD: Auxiliary function for string Parsing in TTM-Read  
@@ -2474,9 +3059,6 @@ void CFL_maxdt(void)
     max_dt_ttm = timestep / ((double) fd_n_timesteps);
   }
   max_dt_ttm *= 0.9; //sicherheits-faktor
-
-//  if(myid==0)
-//     printf("mdstep:%d,maxdt_diffusion:%.4e,maxdt_advection:%.4e,steps:%f\n",steps,max_dt_ttm,maxdt_advect,timestep/max_dt_ttm);
 }
 
 
@@ -2485,6 +3067,32 @@ double EOS_ee_from_r_te(double r, double t)
   //if (r < RHOMIN) return 0;
 
   double tsqrt = sqrt(t);
+
+  // If any cell exceeds the interpolation range, we assume that the outermost values are still valid enough
+
+  // Density
+  /*
+  if (r < intp_ee_from_r_tesqrt.xmin)
+  {
+    r = intp_ee_from_r_tesqrt.xmin;
+  }
+  */
+
+  if (r > intp_ee_from_r_tesqrt.xmax)
+  {
+    r = intp_ee_from_r_tesqrt.xmax;
+  }
+
+  // Temperature
+  if (tsqrt < intp_ee_from_r_tesqrt.ymin)
+  {
+    tsqrt = intp_ee_from_r_tesqrt.ymin;
+  }
+
+  if (tsqrt > intp_ee_from_r_tesqrt.ymax)
+  {
+    tsqrt = intp_ee_from_r_tesqrt.ymax;
+  }
 
   point pout;
   pout.x = r;
@@ -2515,12 +3123,12 @@ if(r < intp_ee_from_r_tesqrt.xmin || r > intp_ee_from_r_tesqrt.xmax)
 
   // nnhpi_interpolate(intp_e_from_r_tsqrt.interpolator, &pout); //naturla neigh, sibson-rule
   lpi_interpolate_point(intp_ee_from_r_tesqrt.interpolator, &pout); //linear
-  //pout.z*=26.9815*AMU*6.2415091E18; // J/kg --> eV/Atom
+  //pout.z*=atomic_weight*AMU*6.2415091E18; // J/kg --> eV/Atom
 #if DEBUG_LEVEL > 0
   if(isnan(pout.z)!=0)
   { 
     char errstr[400];
-    sprintf(errstr, "ERROR in EOS_ee_from_r_te: ee_from_r_te retunred NaN!.r:%.4e,t:%.4e",r,t);
+    sprintf(errstr, "ERROR in EOS_ee_from_r_te: ee_from_r_te returned NaN!.r:%.4e,t:%.4e",r,t);
     error(errstr);
   }
 #endif
@@ -2532,10 +3140,36 @@ double EOS_cve_from_r_te(double r, double t)
 {
 
   //r = MAX(r, RHOMIN);
-  //r = MIN(r, 3500); //CHEAT
 
   //double tsqrt = sqrt(t);
   
+  // If any cell exceeds the interpolation range, we assume that the outermost values are still valid enough
+
+  // Density
+  /*
+  if (r < intp_cve_from_r_te.xmin)
+  {
+    r = intp_cve_from_r_te.xmin;
+  }
+  */
+
+  if (r > intp_cve_from_r_te.xmax)
+  {
+    r = intp_cve_from_r_te.xmax;
+  }
+
+
+  // Temperature
+  if (t < intp_cve_from_r_te.ymin)
+  {
+    t = intp_cve_from_r_te.ymin;
+  }
+  
+  if (t > intp_cve_from_r_te.ymax)
+  {
+    t = intp_cve_from_r_te.ymax;
+  }
+
   point pout;
   pout.x = r;
   pout.y = t;
@@ -2570,10 +3204,10 @@ double EOS_cve_from_r_te(double r, double t)
   if(isnan(pout.z)!=0)
   { 
     char errstr[400];
-    sprintf(errstr, "ERROR: cve_from_r_te retunred NaN!.r:%.4e,t:%.4e",r,t);
+    sprintf(errstr, "ERROR: cve_from_r_te returned NaN!.r:%.4e,t:%.4e",r,t);
     error(errstr);
   }
-  #endif
+#endif
 
   // double tupper=t+0.02*t;
   // double tlower=t-0.02*t;
@@ -2591,9 +3225,87 @@ double EOS_cve_from_r_te(double r, double t)
   return pout.z;
 }
 
+#ifdef TTT
+double EOS_g_from_r_te(double r, double t)
+{
+  // If any cell exceeds the interpolation range, we assume that the outermost values are still valid enough
+
+  // Density
+  /*
+  if (r < intp_g_from_r_te.xmin)
+  {
+    r = intp_g_from_r_te.xmin;
+  }
+  */
+
+  if (r > intp_g_from_r_te.xmax)
+  {
+    r = intp_g_from_r_te.xmax;
+  }
+
+
+  // Temperature
+  if (t < intp_g_from_r_te.ymin)
+  {
+    t = intp_g_from_r_te.ymin;
+  }
+
+  if (t > intp_g_from_r_te.ymax)
+  {
+    t = intp_g_from_r_te.ymax;
+  }
+      
+  point pout;
+  pout.x = r;
+  pout.y = t;
+
+#if DEBUG_LEVEL > 0
+  if(r < intp_g_from_r_te.xmin || r > intp_g_from_r_te.xmax)
+  {
+    char errstr[400];
+    sprintf(errstr, "ERROR in EOS_g_from_r_te: Density=%.4e  exceeds interpolation range: xmin=%.4e, xmax=%.4e\n",
+      r,intp_g_from_r_te.xmin,intp_g_from_r_te.xmax);
+
+    printf("myid:%d, WARNING: %s. using bounds.\n",myid,errstr);
+    r=MIN(intp_g_from_r_te.xmax, r);
+    r=MAX(r,intp_g_from_r_te.xmin);
+    //error(errstr);
+  }
+  if(t < intp_g_from_r_te.ymin || t > intp_g_from_r_te.ymax)
+  {
+    char errstr[400];
+    sprintf(errstr, "ERROR in EOS_g_from_r_te: Te=%.4e  exceeds interpolation range: ymin=%.4e, ymax=%.4e\n",
+      t,intp_g_from_r_te.ymin,intp_g_from_r_te.ymax);
+
+    printf("myid:%d, WARNING: %s. using bounds.\n",myid,errstr);
+    t=MIN(intp_g_from_r_te.ymax, t);
+    t=MAX(t,intp_g_from_r_te.ymin);
+  }
+#endif
+
+  // nnhpi_interpolate(intp_e_from_r_tsqrt.interpolator, &pout); //naturla neigh, sibson-rule
+  lpi_interpolate_point(intp_g_from_r_te.interpolator, &pout); //linear
+#if DEBUG_LEVEL > 0
+  if(isnan(pout.z)!=0)
+  {
+    char errstr[400];
+    sprintf(errstr, "ERROR: g_from_r_te returned NaN!.r:%.4e,t:%.4e",r,t);
+    error(errstr);
+  }
+#endif
+
+  pout.z *= r; // W/(K*kg) --> W/K/m^3
+  pout.z *= 11604.5;  // --> W/eV/m^3
+  pout.z *= 1e-30; // --> W/eV/Angs^3 = J/s/eV/Angs^3
+  pout.z *= J2eV; // --> 1/s/Angs^3
+  pout.z *= 10.1806e-15; // --> 1/(10.18 fs)/Angs^3
+
+  return pout.z;
+}
+#endif
+
 double EOS_phase_from_r_ti(double r, double t)
 {
-  
   point pout;
   pout.x = r;
   pout.y = t;
@@ -2628,23 +3340,43 @@ double EOS_phase_from_r_ti(double r, double t)
   if(isnan(pout.z)!=0)
   { 
     char errstr[400];
-    sprintf(errstr, "ERROR: phase_from_r_ti retunred NaN!.r:%.4e,t:%.4e",r,t);
+    sprintf(errstr, "ERROR: phase_from_r_ti returned NaN!.r:%.4e,t:%.4e",r,t);
     error(errstr);
   }
-  #endif
+#endif
 
   return round(pout.z);
 }
 
 double EOS_pe_from_r_te(double r, double t)
 {
+  // If any cell exceeds the interpolation range, we assume that the outermost values are still valid enough
+  
+  // Density
+  if (r < intp_pe_from_r_te.xmin)
+  {
+    r = intp_pe_from_r_te.xmin;
+  }
+  if (r > intp_pe_from_r_te.xmax)
+  {
+    r = intp_pe_from_r_te.xmax;
+  }
 
-  //r = MAX(r, RHOMIN);
-  //r = MIN(r, 3500); //CHEAT
 
-  //double tsqrt = sqrt(t);
+  // Temperature
+  if (t < intp_pe_from_r_te.ymin)
+  {
+    t = intp_pe_from_r_te.ymin;
+  }
+
+  if (t > intp_pe_from_r_te.ymax)
+  {
+    t = intp_pe_from_r_te.ymax;
+  }
   
   point pout;
+  pout.x = r;
+  pout.y = t;
 
   
 #if DEBUG_LEVEL > 0   
@@ -2678,10 +3410,10 @@ double EOS_pe_from_r_te(double r, double t)
   if(isnan(pout.z)!=0)
   { 
     char errstr[400];
-    sprintf(errstr, "ERROR: pe_from_r_te retunred NaN!.r:%.4e,t:%.4e",r,t);
+    sprintf(errstr, "ERROR: pe_from_r_te returned NaN!.r:%.4e,t:%.4e",r,t);
     error(errstr);
   }
-  #endif
+#endif
 
   // double tupper=t+0.02*t;
   // double tlower=t-0.02*t;
@@ -2716,7 +3448,7 @@ double EOS_te_from_r_ee(double r, double e)
   }    
 #endif
 
-  //double eSI=e/(26.9815*AMU*6.2415091E18); // eV/Atom ---> J/kg
+  //double eSI=e/(atomic_weight*AMU*6.2415091E18); // eV/Atom ---> J/kg
   double a = pow(intp_ee_from_r_tesqrt.ymin, 2.0);
   double b = pow(intp_ee_from_r_tesqrt.ymax, 2.0);
   double m = fminbnd(a, b, eeminfun, 1e-4, r, e);
@@ -2728,12 +3460,12 @@ double eeminfun(double x, double r, double e) //Auxiliary function for Te_from_d
   return ABS(EOS_ee_from_r_te(r, x) - e);
 }
 
-
 //Selber für FEG-model
 double FEG_eeminfun(double x, double r, double ne, double e) 
 {
   return ABS(FEG_ee_from_r_ne_te(r,ne,x) - e);
 }
+
 double FEG_ee_from_r_ne_te(double r,double ne, double T) //free-electron internal energy from Fermi-integral, T in K
 {
  return 0;
@@ -2745,8 +3477,8 @@ double FEG_ee_from_r_ne_te(double r,double ne, double T) //free-electron interna
   double result=C*F_3_half/r;
   return result;
   */
-
 }
+
 double FEG_te_from_r_ne_ee(double r,double ne,double e)
 {
   //tmin=100 ?
@@ -2857,8 +3589,6 @@ void SwapTTM(int i, int j, int k)
 //        int itmp=node2.natoms_old;
 //        node2.natoms_old=node.natoms_old;
 //        node.natoms_old=itmp;
-
-
 }
 #endif
 
@@ -3411,7 +4141,4 @@ double FEG_cve_from_ne_te(double r,double ne,double T)//specific heat of quasi-f
 
 
   // return result;
-
 }
-
-

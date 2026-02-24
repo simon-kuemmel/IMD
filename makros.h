@@ -150,6 +150,11 @@ INLINE static int MOD(shortint p, int q)
 #define OLDPOS(cell,i,sub)      ((cell)->bb_oldpos sub(i))
 #endif
 
+#ifdef ANA
+#define ANA_RHO(cell,i)         ((cell)->ana_rho[i])
+#define ANA_DF(cell,i)          ((cell)->ana_dF [i])
+#endif
+
 #ifdef EAM2
 #define EAM_RHO(cell,i)         ((cell)->eam_rho[i])
 #define EAM_DF(cell,i)          ((cell)->eam_dF [i])
@@ -179,9 +184,10 @@ INLINE static int MOD(shortint p, int q)
 #define NUMNEIGHS(cell,i)       ((cell)->numneighs[i])
 #endif
 
-#ifdef LOD      //local order parameter
-#define LODP(cell,i)       ((cell)->lod[i])
-#endif
+#ifdef LOP
+#define LOPI(cell,i)       ((cell)->lopi[i])
+#define LOPN(cell,i)       ((cell)->lopn[i])
+#endif // LOP
 
 #ifdef COLRAD
 #define Ith(v,i)    NV_Ith_S(v,i)       /* Ith numbers components 1..NEQ */

@@ -379,6 +379,10 @@ void copy_atom_cell_buf(msgbuf *to, int to_cpu, cell *p, int ind )
   to->data[ to->n++ ] = MASSE (p,ind);
   to->data[ to->n++ ] = POTENG(p,ind);
 #endif
+#ifdef ANA
+  to->data[ to->n++ ] = ANA_RHO(p,ind);
+  /* ana_dF  is not sent */
+#endif // ANA
 #ifdef EAM2
   to->data[ to->n++ ] = EAM_RHO(p,ind);
   /* eam_dF  is not sent */
@@ -400,8 +404,9 @@ void copy_atom_cell_buf(msgbuf *to, int to_cpu, cell *p, int ind )
   to->data[ to->n++ ] = p->fdj[ind];
   to->data[ to->n++ ] = p->fdk[ind]; 
 #endif
-#ifdef LOD
-  to->data[ to->n++ ] = LODP(p,ind);
+#ifdef LOP
+  to->data[ to->n++ ] = LOPI(p, ind);
+  to->data[ to->n++ ] = LOPN(p, ind);
 #endif
 #ifdef NRB
   to->data[ to->n++ ] =NRBI(p,ind,0);
@@ -628,6 +633,10 @@ void copy_atom_buf_cell(minicell *p, msgbuf *b, int start)
   MASSE (to,ind) = b->data[j++];
   POTENG(to,ind) = b->data[j++];
 #endif
+#ifdef ANA
+  ANA_RHO(to,ind) = b->data[j++];
+  /* don't send ana_dF  */
+#endif // ANA
 #ifdef EAM2
   EAM_RHO(to,ind) = b->data[j++];
   /* don't send eam_dF  */
@@ -649,8 +658,9 @@ void copy_atom_buf_cell(minicell *p, msgbuf *b, int start)
   to->fdj[ind]=b->data[j++];
   to->fdk[ind]=b->data[j++];
 #endif
-#ifdef LOD
-  LODP(to,ind)   =b->data[j++];
+#ifdef LOP
+  LOPI(to, ind)=b->data[j++];
+  LOPN(to, ind)=b->data[j++];
 #endif
 #ifdef NRB
   NRBI(to,ind,0)=b->data[j++];
@@ -878,8 +888,9 @@ void setup_buffers(void)
     binc1++;
     binc1++;
 #endif
-#ifdef LOD
-    binc1++;
+#ifdef LOP
+    binc1++;  // for LOPI
+    binc1++;  // for LOPN
 #endif
 #ifdef NRB
   binc1+=14; // 12 x nrbid + nrbbnd +nrbneigh
@@ -926,6 +937,9 @@ void setup_buffers(void)
 #endif
 
     /* communication of host electron density, adp_mu, adp_lambda */
+#ifdef ANA
+    binc3 = 1;
+#endif // ANA
 #ifdef EAM2
 #ifdef EEAM
     binc3 = 2;
@@ -935,7 +949,8 @@ void setup_buffers(void)
 #ifdef ADP
     binc3 += 9;
 #endif
-#endif /* EAM2 */
+#endif /* EAM2 */ 
+  
     /* communication of induced dipoles etc */
 #if defined(DIPOLE) || defined(KERMODE)
     binc4 = 4*DIM; 		/* 4 vector fields */
@@ -947,6 +962,9 @@ void setup_buffers(void)
 #else
     binc=binc1;
 #endif
+#ifdef ANA
+    binc=MAX(binc,binc3);
+#endif // ANA
 #ifdef EAM2
     binc=MAX(binc,binc3);
 #endif

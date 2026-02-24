@@ -1,0 +1,62 @@
+ANA:
+Analytical potentials can now be evaluated in IMD. Explicitely, the compile option employs an analytical EAM potential whose implementation is heavily based on the original EAM implementation. All relevant functions are implemented in
+  imd_forces_ana.c .
+The function evaluation of the various energy and force contributions of the analytical EAM potential are carried out using macros that are implemented in
+  makros.h .
+A higher value of msgbuf_size should probably be used. 
+  msgbuf_size = 100.0
+might be excessive but works find. If the chosen or default value isn't high enough, IMD will throw an error.
+The compile option NBL can be used together with ANA If IMD is compiled with NBL, FILTER and NRB can be used as well
+
+ANAT:
+The analytical EAM potentials allow the evaluation of the potential at arbitrary electron temperatures up to 1.2 eV if IMD is compiled with the option ANAT. As a side note, it should be mentioned that ANA uses the unexcited ANAT potential.
+The option ANAT should only be used with the TTM enabled since it requires the electron temperatures in each FD cell. To correctly model the blast force at the surface of two FD cells with different electron temperatures, action=reactio cannot be used anymore. Instead, the force evaluation is performed here as if the core potential was asymetric using the automatically loaded option ASYMPOT.
+The compile options NBL, FILTER and NRB work with ANAT. Virtual lattice at the end of the sample doesn't work either.
+
+ANATE:
+Since the reference energy of each ANAT potential is the single-atom energy, the total energy isn't preserved anymore. With the compile option ANATE, this is counteracted by increasing or lowering the electron temperature to the point where the sum of interaction energy and electronic energy is constant. This is implemented in
+  imd_ttm.c
+
+NBL:
+Force calculation for ANA(T/E) was adapted to work with neighbour lists.
+
+NRB:
+NRB was adapted to work with ANA+NBL. For copper, the same parameters can be used as for aluminium, see original documentation. nrb_alat has to be adapted of course.
+
+FILTER:
+FILTER was adapted to work with ANA+NBL. All parameters are the same as before, see original documentation.
+
+LOP:
+Local order parameter based on Hoyt (2001). Original approach was adapted for the on-the-fly use in MD simulations with cells by using atoms within nearest-neighbour distance and next-nearest-neighbour distance that is automaticelly calculated based on parameter a0. Replaces compile option LOD that previously wasn't used.
+  --> New parameter: a0
+Since LOP depends on the neighbourhood of each atom, the neighbour lists (compile option NBL) have to be recalculated regularly. NBL+LOP isn't tested very well yet and good parameter cannot be given yet.
+  
+TFM:
+The original TTM implementation was heavily based on properties calculated from the Thomas-Fermi model.
+  --> New parameters: eps_filename, cve_filename, ee_filename, phase_filename, g_filename, k12_filename, pe_filename (if compiled with ELECPRESS)
+
+MATERIALCU:
+Alternative to TFM for Cu parametrization based on data from Lin et al. (2008), Petrov et al. (2016), Winter (2017) and Bevillon et al. (2014). This option automatically loads LOP for phase-dependent evaluation of properties
+  --> New parameters: cve_filename, ee_filename, g_filename, pe_filename (if compiled with ELECPRESS)
+  
+MATERIALAL:
+Currently in development.
+
+TMM:
+Pulse duration was fixed.
+  --> New parameters: tau_p, tau_p1, fluence instead of laser_sigma_t, laser_sigma_t1, I0
+
+TM2:
+Alternative to TMM. Laser absorption model based on density-dependent Lambert-Beer law. Allows to incorporate ballistic electron motion by extending absorption depth using parameter lambda_ball (currently in development).
+  --> New parameters: tau_p, tau_p1, fluence, lambda_ball
+  
+BALLISTIC:
+Currently in development.
+
+TTT:
+Alternative to optical properties from original parametrization (now part of compile option TFM). MATERIALCU for copper or MATERIALAL for aluminium (currently in development) can be chosen. Calculates optical properties based on Winter et al. (2017).
+
+Others:
+ - New parameter vlatdens
+ - Removed several commented out debug print statements
+

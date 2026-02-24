@@ -21,9 +21,6 @@
 
 #include "imd.h"
 
-//MYMOD
-//#define ELECPRESS
-//ENDOF MYMOD
 /*****************************************************************************
 *
 * Basic NVE Integrator
@@ -640,9 +637,6 @@ void move_atoms_ttm(void)
     //Dasselbe gilt für vcom.x,y,z 
   #endif
 
-    // MY MOD : DEBUG
-    // printf("proc:%d,steps:%d,i:%d,j:%d,k:%d,fd_xi:%e\n",myid,steps,fd_i,fd_j,fd_k,fd_xi);
-
     for (i=0; i<p->n; ++i) 
     { /* loop over all atoms in the cell */
 
@@ -652,14 +646,11 @@ void move_atoms_ttm(void)
       {
         i_global=(int) (ORT(p,i,X)/fd_h.x);
         i_global=MIN(i_global,global_fd_dim.x-1);
-        i_global=MAX(i_global,0);          
+        i_global=MAX(i_global,0);
         fd_xi=xiarr_global[i_global];
 #ifdef ELECPRESS
         epressforce=epress_deriv[i_global];
-#endif        
-        // if(NUMMER(p,i)==605)
-        //   printf("kraft:%.4e, eforce:%.4e\n",KRAFT(p,i,X),epressforce);
-
+#endif  
       }
       else
       {
@@ -750,21 +741,12 @@ void move_atoms_ttm(void)
     }
 #endif      
 
-      /* MY MOD DEBUG */
-      //IMPULS(p,i,X)=0;
-      //IMPULS(p,i,Y)=0;
-      //IMPULS(p,i,Z)=0;
-
       kin_energie_2 = SPRODN(IMPULS,p,i,IMPULS,p,i);
       tot_kin_energy += (kin_energie_1 + kin_energie_2) / (4 * MASSE(p,i));
 
       /* new positions */
 
       tmp = timestep / MASSE(p,i);
-
-     
-      /** MY MOD: DEBUG */
-      //printf("proc:%d,steps:%d,fx:%e,fy:%e,fz:%e\n",myid,steps,KRAFT(p,i,X),KRAFT(p,i,Y),KRAFT(p,i,Z));
 
       ORT(p,i,X) += tmp * IMPULS(p,i,X);
       ORT(p,i,Y) += tmp * IMPULS(p,i,Y);

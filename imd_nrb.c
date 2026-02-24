@@ -152,7 +152,7 @@ int init_nrb() //nrb_eps=Abstands-toleranz in Angstrom,alat=Lattice const.
 //  nrbk=0.9;
 //  nrbk=1.2;
   //der coeff fuer die matrizen ist sqrt(k/m)
-  nrbk=sqrt(nrbk/26.9815);
+  nrbk=sqrt(nrbk/atomic_weight);
 
   if(imdrestart>0)
   {
@@ -173,7 +173,7 @@ int init_nrb() //nrb_eps=Abstands-toleranz in Angstrom,alat=Lattice const.
 
     printf("* nrb_alat:%.4e\n",nrb_alat);
     printf("* nrb_eps: %.4e\n",nrb_eps);
-    printf("* nrb_k: %.4e\n",pow(nrbk,2.0)*26.9815);
+    printf("* nrb_k: %.4e\n",pow(nrbk,2.0)*atomic_weight);
     if(nrb_readfile==1)
     {
       printf("* reading non-restart input-file: %s\n",nrb_input_file);
@@ -803,7 +803,7 @@ int nrb_forces(void)
 
   int k;
 
-  double mass=26.9815; // TODO: weiter unten einfach mit MASSE(p,i) tauschen.Caution: checken ob auch sinnvolle werte geliefert werden
+  double mass=atomic_weight; // TODO: weiter unten einfach mit MASSE(p,i) tauschen.Caution: checken ob auch sinnvolle werte geliefert werden
   int i;               //       denn manche zellen sind nur buffer-zellen
   for(i=0;i<12;i++)
   {

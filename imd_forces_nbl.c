@@ -297,6 +297,13 @@ void calc_forces(int steps)
   int  i, b, k, n=0, is_short=0, idummy=0;
   real tmpvec1[8], tmpvec2[8] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
+#ifdef ANAT
+  int i_global, j_global;
+  double t_el_ana_p, t_el_ana_q;
+  double t_eff_p, t_eff_q;
+  double t_el_ana, t_eff;
+#endif // ANAT
+
   if (0==have_valid_nbl) 
   {
 #ifdef MPI
@@ -309,7 +316,6 @@ void calc_forces(int steps)
 
   /* fill the buffer cells */
   send_cells(copy_cell,pack_cell,unpack_cell);
-
 
   /* make new neighbor lists */
   if (0==have_valid_nbl) make_nblist();
@@ -361,7 +367,10 @@ void calc_forces(int steps)
 #ifdef COVALENT
       NEIGH(p,i)->n = 0;
 #endif
-#ifdef EAM2
+#if defined(ANA)
+      ANA_RHO(p,i) = 0.0;
+#endif // ANA
+#if defined(EAM2)
       EAM_RHO(p,i) = 0.0;
 #ifdef EEAM
       EAM_P(p,i) = 0.0;
@@ -412,6 +421,7 @@ void calc_forces(int steps)
       superforce[i].z = 0.0;
     }
 #endif
+ 
   //*************************************
   /* pair interactions - for all atoms */
   /*************************************/
@@ -419,16 +429,24 @@ void calc_forces(int steps)
   for (k=0; k<ncells; k++) 
   {
     cell *p = cell_array + cnbrs[k].np;
+
+#ifdef ANAT 
+    // Determine electron temperature in cell p
+    if (p->n > 0)
+    {
+      i_global = (int) (ORT(p, 0, X)/fd_h.x); // Use particle 0 of second cell for determination of interaction/electron temperature
+      // NOTE: If p->n == 0, this doesn't matter since no interaction is calculated and actio=reaction isn't used anyways
+    }
+
+    i_global = MIN(i_global, global_fd_dim.x-1);
+    i_global = MAX(i_global, 0);
+    t_eff_p = MIN(t_el_ana_arr_global[i_global], 1.2);    // ANA is only savely usable until ~1.2 eV
+#endif // ANAT
+
     for (i=0; i<p->n; i++) 
     {
-
 #ifdef STRESS_TENS
       sym_tensor pp = {0.0,0.0,0.0,0.0,0.0,0.0};
-#endif
-#ifdef ADP
-      real       tmp;
-      vektor     mu = {0.0,0.0,0.0};
-      sym_tensor la = {0.0,0.0,0.0,0.0,0.0,0.0};
 #endif
       vektor d1, ff = {0.0,0.0,0.0};
       real   ee = 0.0;
@@ -459,7 +477,8 @@ void calc_forces(int steps)
         c = cl_num[ tb[m] ];
         j = tb[m] - cl_off[c];
         q = cell_array + c;
-	// position of 2nd atom
+        
+        // position of 2nd atom
         d.x = ORT(q,j,X) - d1.x;
         d.y = ORT(q,j,Y) - d1.y;
         d.z = ORT(q,j,Z) - d1.z;
@@ -468,30 +487,228 @@ void calc_forces(int steps)
         col = it * ntypes + jt;
 
         col2= jt * ntypes + it;
-//MYMOD
-#ifdef TTM
-if(r2 <= pair_pot.end[0])
-{        
-  if(SORTE(p,i)==0 && SORTE(q,j)==0)
-  {
-    nbttm++;
-    NUMNEIGHS(q,j)++;
-  }
-  
-}
-#endif
-//ENDOF MYMOD
+        
+#ifdef ANAT
+        // Determine electron temperature in cell q
+        if (q->n > 0)
+        {
+          j_global = (int) (ORT(q, 0, X)/fd_h.x); // Use particle 0 of second cell for determination of interaction/electron temperature
+          // NOTE: If q->n == 0, this doesn't matter since no interaction is calculated and actio=reaction isn't used anyways
+        }
 
+        j_global = MIN(j_global, global_fd_dim.x-1);
+        j_global = MAX(j_global, 0);
+        t_eff_q = MIN(t_el_ana_arr_global[j_global], 1.2);    // ANA is only savely usable until ~1.2 eV
+
+        // If the electron temperature is the same in cell p and q, we only have to calculate the parameters once
+        if (t_eff_p==t_eff_q){
+          CALC_TE_PARAMS(t_eff_p);
+        }
+#endif // ANAT
+
+#ifdef TTM
+#ifdef ANA
+        if (r2 <= ana_cutoff*ana_cutoff){
+          nbttm++;
+          NUMNEIGHS(q,j)++;
+        }
+#else
+        if(r2 <= pair_pot.end[0])
+        {        
+          if(SORTE(p,i)==0 && SORTE(q,j)==0)
+          {
+            nbttm++;
+            NUMNEIGHS(q,j)++;
+          }
+        }
+#endif // ANA
+#endif // TTM
+
+#ifdef ANA
+        if (r2 <= ana_cutoff*ana_cutoff)
+        {
+#ifdef LOP
+          // NOTE: Repeating the calculation of LOP isn't needed for particle j
+          // since LOP is based on the structure, not on the electron temperature
+          if (r2<=pow((sqrt(2)*a0/2 + a0)/2, 2)){
+            // Nearest-neighbour vectors
+            double nn_vectors[12][3] = {{a0*0.5, a0*0.5, 0.0},
+                                        {-a0*0.5, a0*0.5, 0.0},
+                                        {a0*0.5, -a0*0.5, 0.0},
+                                        {-a0*0.5, -a0*0.5, 0.0},
+                                        {0.0, a0*0.5, a0*0.5},
+                                        {0.0, -a0*0.5, a0*0.5},
+                                        {0.0, a0*0.5, -a0*0.5},
+                                        {0.0, -a0*0.5, -a0*0.5},
+                                        {a0*0.5, 0.0, a0*0.5},
+                                        {-a0*0.5, 0.0, a0*0.5},
+                                        {a0*0.5, 0.0, -a0*0.5},
+                                        {-a0*0.5, 0.0, -a0*0.5}};
+
+            double phi_tmp;
+            double phi_min;
+          
+            for (int nn_vector_counter=0; nn_vector_counter<12; nn_vector_counter++){
+              phi_tmp = pow(d.x - nn_vectors[nn_vector_counter][0], 2)
+                      + pow(d.y - nn_vectors[nn_vector_counter][1], 2)
+                      + pow(d.z - nn_vectors[nn_vector_counter][2], 2);
+
+              // This is used to find the best agreement
+              if (nn_vector_counter==0){
+                phi_min = phi_tmp;
+              }
+              else{
+                if (phi_tmp<phi_min){
+                  phi_min = phi_tmp;
+                }
+              }
+            }
+
+            // Assign best fitting value to arrays
+            LOPI(p, i) += phi_min;
+            LOPI(q, j) += phi_min;
+            LOPN(p, i) += 1;
+            LOPN(q, j) += 1;
+          }
+#endif // LOP
+
+          /* compute pair interactions, first on particle i */
+#ifdef ANAT
+          if (t_eff_p!=t_eff_q){
+            CALC_TE_PARAMS(t_eff_q);
+	  }
+#endif
+          CALC_PAIR_ENERGY(pot, grad);
+
+          tot_pot_energy += pot;
+          force.x = d.x * grad;
+          force.y = d.y * grad;
+          force.z = d.z * grad;
+          KRAFT(p,i,X) += force.x;
+          KRAFT(p,i,Y) += force.y;
+          KRAFT(p,i,Z) += force.z;
+          
+#ifdef P_AXIAL
+          vir_xx -= d.x * force.x;
+          vir_yy -= d.y * force.y;
+          vir_zz -= d.z * force.z;
+#else
+          virial -= r2  * grad;
+#endif
+
+#ifdef STRESS_TENS
+          if (do_press_calc) {
+            /* avoid double counting of the virial */
+            force.x *= 0.5;
+            force.y *= 0.5;
+            force.z *= 0.5;
+
+            PRESSTENS(p,i,xx) -= d.x * force.x;
+            PRESSTENS(p,i,yy) -= d.y * force.y;
+            PRESSTENS(p,i,xy) -= d.x * force.y;
+            PRESSTENS(p,i,zz) -= d.z * force.z;
+            PRESSTENS(p,i,yz) -= d.y * force.z;
+            PRESSTENS(p,i,zx) -= d.z * force.x;
+          }
+#endif
+
+          /* compute pair interactions, now on particle j */
+#ifdef ANAT
+          if (t_eff_p!=t_eff_q){
+            CALC_TE_PARAMS(t_eff_p);
+          }
+#endif
+          CALC_PAIR_ENERGY(pot, grad);
+
+          tot_pot_energy += pot;
+          force.x = d.x * grad;
+          force.y = d.y * grad;
+          force.z = d.z * grad;
+          KRAFT(q,j,X) -= force.x;
+          KRAFT(q,j,Y) -= force.y;
+          KRAFT(q,j,Z) -= force.z;
+
+#ifdef P_AXIAL
+          vir_xx -= d.x * force.x;
+          vir_yy -= d.y * force.y;
+          vir_zz -= d.z * force.z;
+#else
+          virial -= r2  * grad;
+#endif
+
+#ifdef STRESS_TENS
+          if (do_press_calc) {
+            /* avoid double counting of the virial */
+            force.x *= 0.5;
+            force.y *= 0.5;
+            force.z *= 0.5;
+
+            PRESSTENS(q,j,xx) -= d.x * force.x;
+            PRESSTENS(q,j,yy) -= d.y * force.y;
+            PRESSTENS(q,j,xy) -= d.x * force.y;
+            PRESSTENS(q,j,zz) -= d.z * force.z;
+            PRESSTENS(q,j,yz) -= d.y * force.z;
+            PRESSTENS(q,j,zx) -= d.z * force.x;
+          }
+#endif
+        }
+
+#endif // ANA
 
         /* compute pair interactions */
 #if defined(PAIR) 
         /* PAIR and KEATING are mutually exclusive */
         if (r2 <= pair_pot.end[col])
 	{
+#ifdef LOP
+          // NOTE: Repeating the calculation of LOP isn't needed for particle j
+          // since LOP is based on the structure, not on the electron temperature
+          if (r2<=pow((sqrt(2)*a0/2 + a0)/2, 2)){
+            // Nearest-neighbour vectors
+            double nn_vectors[12][3] = {{a0*0.5, a0*0.5, 0.0},
+                                        {-a0*0.5, a0*0.5, 0.0},
+                                        {a0*0.5, -a0*0.5, 0.0},
+                                        {-a0*0.5, -a0*0.5, 0.0},
+                                        {0.0, a0*0.5, a0*0.5},
+                                        {0.0, -a0*0.5, a0*0.5},
+                                        {0.0, a0*0.5, -a0*0.5},
+                                        {0.0, -a0*0.5, -a0*0.5},
+                                        {a0*0.5, 0.0, a0*0.5},
+                                        {-a0*0.5, 0.0, a0*0.5},
+                                        {a0*0.5, 0.0, -a0*0.5},
+                                        {-a0*0.5, 0.0, -a0*0.5}};
+
+            double phi_tmp;
+            double phi_min;
+          
+            for (int nn_vector_counter=0; nn_vector_counter<12; nn_vector_counter++){
+              phi_tmp = pow(d.x - nn_vectors[nn_vector_counter][0], 2)
+                      + pow(d.y - nn_vectors[nn_vector_counter][1], 2)
+                      + pow(d.z - nn_vectors[nn_vector_counter][2], 2);
+
+              // This is used to find the best agreement
+              if (nn_vector_counter==0){
+                phi_min = phi_tmp;
+              }
+              else{
+                if (phi_tmp<phi_min){
+                  phi_min = phi_tmp;
+                }
+              }
+            }
+
+            // Assign best fitting value to arrays
+            LOPI(p, i) += phi_min;
+            LOPI(q, j) += phi_min;
+            LOPN(p, i) += 1;
+            LOPN(q, j) += 1;
+          }
+#endif // LOP
+
 #ifdef LINPOT
           PAIR_INT_LIN(pot, grad, pair_pot_lin, col, inc, r2, is_short);
 #else
-	  PAIR_INT(pot, grad, pair_pot, col, inc, r2, is_short);
+          PAIR_INT(pot, grad, pair_pot, col, inc, r2, is_short);
 #endif
           tot_pot_energy += pot;
           force.x = d.x * grad;
@@ -544,6 +761,27 @@ if(r2 <= pair_pot.end[0])
         }
 
 #endif /* PAIR || KEATING */
+
+#ifdef ANA
+        /* compute host electron density */
+        if (r2 < ana_cutoff*ana_cutoff)  {
+#ifdef ANAT
+          if (t_eff_p!=t_eff_q){
+            CALC_TE_PARAMS(t_eff_q);
+          }
+#endif
+          CALC_RHO(rho_h);
+          ANA_RHO(p,i) += rho_h;
+          
+#ifdef ANAT
+          if (t_eff_p!=t_eff_q){
+            CALC_TE_PARAMS(t_eff_p);
+            CALC_RHO(rho_h);
+          }
+#endif
+          ANA_RHO(q,j) += rho_h;
+        }
+#endif // ANA
 
 #ifdef EAM2
         /* compute host electron density */
@@ -626,14 +864,16 @@ if(r2 <= pair_pot.end[0])
         }
 #endif  /* COVALENT */
 
-      } // end of for (m=tl[n]; m<tl[n+1]; m++) 
+      } // end of for (m=tl[n]; m<tl[n+1]; m++)
+      
+#ifndef ANA
       KRAFT(p,i,X) += ff.x;
       KRAFT(p,i,Y) += ff.y;
       KRAFT(p,i,Z) += ff.z;
 #ifndef MONOLJ
       POTENG(p,i)  += ee;
 #endif
-#ifdef EAM2
+#if defined(EAM2)
       EAM_RHO(p,i) += eam_r;
 #ifdef EEAM
       EAM_P(p,i)   += eam_p;
@@ -663,6 +903,7 @@ if(r2 <= pair_pot.end[0])
 #ifdef NNBR
       NBANZ(p,i)    += nb;
 #endif
+#endif // not ANA
 
 #ifdef TTM
 NUMNEIGHS(p,i) += nbttm;
@@ -739,8 +980,208 @@ NUMNEIGHS(p,i) += nbttm;
 
 #endif /* COVALENT */
 
-#ifdef EAM2
 
+#ifdef ANA
+  /* collect host electron density */
+  send_forces(add_rho_ana,pack_rho_ana,unpack_add_rho_ana);
+
+  /* compute embedding energy and its derivative */
+  for (k=0; k<ncells; k++) 
+  {
+    cell *p = CELLPTR(k);
+    real pot;
+    
+#ifdef ANAT
+    i_global=(int) (ORT(p,0,X)/fd_h.x);
+    i_global=MIN(i_global,global_fd_dim.x-1);
+    i_global=MAX(i_global,0);          
+    t_el_ana=t_el_ana_arr_global[i_global];
+    t_eff = MIN(t_el_ana, 1.2);    // ANA is only savely usable until ~1.2 eV
+
+    CALC_TE_PARAMS(t_eff);
+#endif
+    
+    for (i=0; i<p->n; i++){
+      if (ANA_RHO(p, i)==0.0){
+        pot = 0.0;
+      }
+      else{
+        CALC_EMBEDDING_ENERGY(pot, ANA_DF(p,i), ANA_RHO(p,i));
+      
+        POTENG(p,i)    += pot;
+        tot_pot_energy += pot;
+      }
+    }
+  }
+
+  /* distribute derivative of embedding energy */
+  send_cells(copy_dF_ana,pack_dF_ana,unpack_dF_ana);
+
+  /* ANA interactions - for all atoms */
+  n=0;
+  for (k=0; k<ncells; k++) 
+  {
+    cell *p = CELLPTR(k);
+    
+#ifdef ANAT
+    // Determine electron temperature in cell p
+    if (p->n > 0)
+    {
+      i_global = (int) (ORT(p, 0, X)/fd_h.x); // Use particle 0 of second cell for determination of interaction/electron temperature
+      // NOTE: If p->n == 0, this doesn't matter since no interaction is calculated and actio=reaction isn't used anyways
+    }
+
+    i_global = MIN(i_global, global_fd_dim.x-1);
+    i_global = MAX(i_global, 0);
+    t_eff_p = MIN(t_el_ana_arr_global[i_global], 1.2);    // ANA is only savely usable until ~1.2 eV
+#endif // ANAT
+    
+    for (i=0; i<p->n; i++) 
+    {
+
+#ifdef STRESS_TENS
+      sym_tensor pp = {0.0,0.0,0.0,0.0,0.0,0.0};
+#endif
+      vektor d1, ff = {0.0,0.0,0.0};
+      int m;
+
+      d1.x = ORT(p,i,X);
+      d1.y = ORT(p,i,Y);
+      d1.z = ORT(p,i,Z);
+
+      /* loop over neighbors */
+      for (m=tl[n]; m<tl[n+1]; m++) 
+      {
+        vektor d, force = {0.0,0.0,0.0};
+        real   r2;
+        int    c, j, have_force=0;
+        cell   *q;
+
+        c = cl_num[ tb[m] ];
+        j = tb[m] - cl_off[c];
+        q = cell_array + c;
+
+        d.x  = ORT(q,j,X) - d1.x;
+        d.y  = ORT(q,j,Y) - d1.y;
+        d.z  = ORT(q,j,Z) - d1.z;
+        r2   = SPROD(d,d);
+
+#ifdef ANAT 
+        // Determine electron temperature in cell q 
+        if (q->n > 0) 
+        { 
+          j_global = (int) (ORT(q, 0, X)/fd_h.x); // Use particle 0 of second cell for determination of interaction/electron temperature 
+          // NOTE: If q->n == 0, this doesn't matter since no interaction is calculated and actio=reaction isn't used anyways 
+        } 
+  
+        j_global = MIN(j_global, global_fd_dim.x-1);
+        j_global = MAX(j_global, 0);
+        t_eff_q = MIN(t_el_ana_arr_global[j_global], 1.2);    // ANA is only savely usable until ~1.2 eV
+
+        // If the electron temperature is the same in cell p and q, we only have to calculate the parameters once
+        if (t_eff_p==t_eff_q){
+          CALC_TE_PARAMS(t_eff_p);
+        }
+#endif
+
+        if (r2 < ana_cutoff * ana_cutoff) {
+          real pot, grad, rho_i_strich, rho_j_strich, rho_i, rho_j;
+
+          /* take care: particle i gets its rho from particle j.    */
+#ifdef ANAT
+          if (t_eff_p!=t_eff_q){
+            CALC_TE_PARAMS(t_eff_q);
+          }
+#endif
+
+          /* rho_strich_i(r_ij) */
+          CALC_RHO_DERIV(rho_i_strich);
+
+#if defined(ANAT)
+          if (t_eff_p==t_eff_q) {
+            rho_j_strich = rho_i_strich;
+          } else {
+            CALC_TE_PARAMS(t_eff_p);
+            CALC_RHO_DERIV(rho_j_strich);
+          }
+#else
+          rho_j_strich = rho_i_strich;
+#endif
+
+          /* put together (dF_i and dF_j are by 0.5 too big) */
+          grad = 0.5 * (ANA_DF(p,i)*rho_j_strich + ANA_DF(q,j)*rho_i_strich);
+
+          /* store force in temporary variable */
+          force.x = d.x * grad;
+          force.y = d.y * grad;
+          force.z = d.z * grad;
+          have_force=1;
+        }
+
+        /* accumulate forces */
+        if (have_force) {
+          KRAFT(q,j,X) += force.x;
+          KRAFT(q,j,Y) += force.y;
+          KRAFT(q,j,Z) += force.z;
+	  ff.x         += force.x;
+          ff.y         += force.y;
+          ff.z         += force.z;
+         
+#ifdef P_AXIAL
+          vir_xx       -= d.x * force.x;
+          vir_yy       -= d.y * force.y;
+          vir_zz       -= d.z * force.z;
+#else
+          virial       -= SPROD(d,force);
+#endif
+
+#ifdef STRESS_TENS
+          if (do_press_calc) {
+            /* avoid double counting of the virial */
+            force.x *= 0.5;
+            force.y *= 0.5;
+            force.z *= 0.5;
+
+            pp.xx -= d.x * force.x;
+            pp.yy -= d.y * force.y;
+            pp.zz -= d.z * force.z;
+            pp.yz -= d.y * force.z;
+            pp.zx -= d.z * force.x;
+            pp.xy -= d.x * force.y;
+
+            PRESSTENS(q,j,xx) -= d.x * force.x;
+            PRESSTENS(q,j,yy) -= d.y * force.y;
+            PRESSTENS(q,j,zz) -= d.z * force.z;
+            PRESSTENS(q,j,yz) -= d.y * force.z;
+            PRESSTENS(q,j,zx) -= d.z * force.x;
+            PRESSTENS(q,j,xy) -= d.x * force.y;
+          }
+#endif
+        }
+      } // end of for (m=tl[n]; m<tl[n+1]; m++)
+
+      
+      KRAFT(p,i,X) -= ff.x;
+      KRAFT(p,i,Y) -= ff.y;
+      KRAFT(p,i,Z) -= ff.z;
+
+#ifdef STRESS_TENS
+      if (do_press_calc) {
+        PRESSTENS(p,i,xx) += pp.xx;
+        PRESSTENS(p,i,yy) += pp.yy;
+        PRESSTENS(p,i,zz) += pp.zz;
+        PRESSTENS(p,i,yz) += pp.yz;
+        PRESSTENS(p,i,zx) += pp.zx;
+        PRESSTENS(p,i,xy) += pp.xy;
+      }
+#endif
+      n++;
+    } // for i
+  } //for k
+#endif /* ANA */
+
+
+#ifdef EAM2
   /* collect host electron density */
   send_forces(add_rho,pack_rho,unpack_add_rho);
 
@@ -1020,18 +1461,6 @@ NUMNEIGHS(p,i) += nbttm;
   if(steps>1) nrb_forces();
 #endif
 
- //TESTFORCE
- /*
-  if(steps<200) //TESTCASE : probe nach links bewegen
-  for(k=0;k<ncells;k++)
-  {    
-    cell*p=CELLPTR(k);
-    for(i=0;i<p->n;i++)
-    {
-      KRAFT(p,i,X)-=10;
-    }
-  }
-  */
 #ifdef FILTER
 
   if(steps>0)
@@ -1040,7 +1469,6 @@ NUMNEIGHS(p,i) += nbttm;
       filter_atoms();
     }
   //Atome werden beim nächsten fix_cells-aufruf gelöscht 
-
 #endif 
 
 #ifdef NRB
@@ -1050,7 +1478,6 @@ NUMNEIGHS(p,i) += nbttm;
 
   /* add forces back to original cells/cpus */
   send_forces(add_forces,pack_forces,unpack_forces);
-
 }
 
 /******************************************************************************
@@ -1346,7 +1773,47 @@ void nrb_test_forces(void)
 
         }
       }
-
     }
   }
 }
+
+
+/******************************************************************************
+*
+*  Correct the potential energies to a fixed reference energy
+*
+******************************************************************************/
+
+#ifdef ANAT
+
+void correct_energy_anat(void)
+{
+  int k;
+  int i_global;
+  double t_el_ana, t_eff;
+
+  for (k=0; k<NCELLS; k++) {
+    int  i, idummy=0;
+    real pot;
+    cell *p;
+    p = CELLPTR(k);
+
+    i_global=(int) (ORT(p,0,X)/fd_h.x);
+    i_global=MIN(i_global,global_fd_dim.x-1);
+    i_global=MAX(i_global,0);
+    t_el_ana=t_el_ana_arr_global[i_global];
+    t_eff = MIN(t_el_ana, 1.2);    // ANA is only savely usable until ~1.2 eV
+
+    // Single-atom energies
+    double E_single_RT = -0.23359741 - 0.36458457*0.025851 - 2.36130430*pow(0.025851, 2);
+    double E_single_T = -0.23359741 - 0.36458457*t_eff - 2.36130430*pow(t_eff, 2);
+
+    for (i=0; i<p->n; i++) {
+      // Correct potential energy to fixed single-atom energy (RT)
+      POTENG(p, i) += E_single_T - E_single_RT;
+    }
+  }
+}
+
+#endif
+

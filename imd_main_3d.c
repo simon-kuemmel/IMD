@@ -333,6 +333,7 @@ int nyeDone;
     //printf("proc:%d,steps:%d, main loop done fix cells\n",myid,steps);
 
 #endif
+
 #ifdef CG
         if (ensemble == ENS_CG) reset_cg();
 #endif
@@ -530,9 +531,54 @@ int nyeDone;
     do_laser_rescale();
 #endif
 #endif
+
 #ifdef TTM
+#ifdef LOP
+    // Zero arrays
+    for (int fd_cell_counter=0; fd_cell_counter<global_fd_dim.x; ++fd_cell_counter){
+      lopi_arr_global[fd_cell_counter] = 0.0;
+      lopi_arr_local[fd_cell_counter] = 0.0;
+      lopn_arr_global[fd_cell_counter] = 0.0;
+      lopn_arr_local[fd_cell_counter] = 0.0;
+    }
+
+    // Calculate LOPI, LOPN in each FD cell
+    for (k=0; k<NCELLS; ++k) { /* loop over all cells */
+      cell *p;
+      int i_global;
+
+      p = CELLPTR(k);
+
+      for (i=0; i<p->n; ++i) { /* loop over all atoms in the cell */
+        i_global=(int) (ORT(p,i,X)/fd_h.x);
+        i_global=MIN(i_global,global_fd_dim.x-1);
+        i_global=MAX(i_global,0);
+
+        lopi_arr_local[i_global] += LOPI(p, i);
+        lopn_arr_local[i_global] += LOPN(p, i);
+      }
+    }
+
+    // Allreduce
+    MPI_Allreduce(&lopi_arr_local[0], &lopi_arr_global[0], global_fd_dim.x, 
+		  MPI_DOUBLE, MPI_SUM, cpugrid);
+    MPI_Allreduce(&lopn_arr_local[0], &lopn_arr_global[0], global_fd_dim.x,
+                  MPI_INT, MPI_SUM, cpugrid);
+
+
+    // Divide LOPI by LOPN
+    for (int fd_cell_counter=0; fd_cell_counter<global_fd_dim.x; ++fd_cell_counter){
+      if (lopn_arr_global[fd_cell_counter]==0){ // Avoid division by zero
+        lopi_arr_global[fd_cell_counter] = 0;
+      }
+      else{
+        lopi_arr_global[fd_cell_counter] /= lopn_arr_global[fd_cell_counter];
+      }
+    }
+#endif // LOP
+
     calc_ttm();
-#endif
+#endif // TTM
 
 #ifdef SM
 #ifdef NBLIST
@@ -699,15 +745,16 @@ int nyeDone;
 #endif /* AVPOS, has to be before write_config so that the correct avpos_nwrites is in the itr file */
 
 //ENDOF
-    if ((checkpt_int > 0) && (0 == steps % checkpt_int) && steps>0) 
+    if ((checkpt_int > 0) && (0 == steps % checkpt_int))
     {
-//MYMOD: BRAUCHE NICHT chkpt 0!!!!
-       write_config( steps/checkpt_int, steps);
-
+      write_config( steps/checkpt_int, steps);
+      
+      if (steps>0){
 //MYMOD: NRB restart-file
 #ifdef NRB
-     nrb_writerestart(steps/checkpt_int); 
+        nrb_writerestart(steps/checkpt_int); 
 #endif
+      }
     }
 //ENDOF MYMOD
     if ((eng_int  > 0) && (0 == steps % eng_int )) 

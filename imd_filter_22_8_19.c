@@ -170,7 +170,7 @@ void filter_atoms(void)
 	    if(DELME(p,l)==1)
 	    {
 	      delcnt++;
-	  //    MASSE(p,l)=26.91;
+	  //    MASSE(p,l)=atomic_weight;
 	    }
 	  }
 	}

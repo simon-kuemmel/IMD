@@ -5,9 +5,9 @@
 */
 
 // ACHTUNG: Falls Qabs=NaN --> Probe wahrscheinlich zu kurz!
-//
-// 
-//#define TMM_t0_suggest //wenn ja, wird t0 so angepasst dass laser E-field gerade @ threshold für laser aktivieren
+
+ 
+#define TMM_t0_suggest //wenn ja, wird t0 so angepasst dass laser E-field gerade @ threshold für laser aktivieren
 
 #ifdef TTM1D
 #define node  l1[i]
@@ -17,7 +17,27 @@
 #define node2 l2[i][j][k]
 #endif
 
-#define RHOMIN  2 //kg/m^3 (active cell abh. von minatoms und dens)
+#define RHOMIN  30  //kg/m^3 (active cell abh. von minatoms und dens)
+                    // NOTE: This might be too small but should be fine. 
+                    // No extrapolation needed if this value is the same as the lowest density in the files
+
+#ifdef TFM
+#define tmm_get_epsilon tmm_get_epsilon_TFM
+#endif
+#ifdef TTT
+#ifdef MATERIALAL // Al
+#define tmm_get_epsilon tmm_get_epsilon_Al
+#define calc_y_bar calc_y_bar_Al
+#define calc_beta calc_beta_Al
+#define calc_w calc_w_Al
+#endif // MATERIALAL
+#ifdef MATERIALCU // Cu
+#define tmm_get_epsilon tmm_get_epsilon_Cu
+#define calc_y_bar calc_y_bar_Cu
+#define calc_beta calc_beta_Cu
+#define calc_w calc_w_Cu
+#endif // MATERIALCU
+#endif
 
 /*2x2 Matrix multiplication*/
 void matmul(double complex *a,double complex *b,double complex *p)
@@ -96,10 +116,7 @@ double EE(double z, double delta, double complex kl, double complex epsl, double
 }
 
 int tmm_init()
-{  
-  laser_sigma_t_squared=laser_sigma_t*laser_sigma_t;
-  laser_sigma_t1_squared=laser_sigma_t1*laser_sigma_t1;
-
+{ 
   //alloc eps arr
   // tmm_eps_real_arr_local = (real*) malloc(global_fd_dim.x*sizeof(real));
   // tmm_eps_imag_arr_local = (real*) malloc(global_fd_dim.x*sizeof(real));
@@ -112,10 +129,11 @@ int tmm_init()
 
   alloc1darr(real,tmm_eps_real_arr_local,global_fd_dim.x);
   alloc1darr(real,tmm_eps_imag_arr_local,global_fd_dim.x);  
-
-  tmm_read_arr("../alu_eps_bb.dat",&eps_bb_data,3,&eps_bb_rows);
-  tmm_read_arr("../K12.dat",&K12,2,&K12_rows); //K1 und K1 num.eval.integrale
-
+  
+#ifdef TFM
+  tmm_read_arr(eps_filename,&eps_bb_data,3,&eps_bb_rows);
+  tmm_read_arr(k12_filename,&K12,2,&K12_rows); //K1 und K1 num.eval.integrale
+#endif
 
   // km=(double complex*) malloc(global_fd_dim.x*sizeof(double complex));
 
@@ -152,10 +170,10 @@ int tmm_init()
   k0/=1e10; //weil fd_h.x in Angstrom 
 
 
-
 #ifdef TMM_t0_suggest
   // verschiebe t0 sodasss laser E-feld gerade threshold-value erreicht
-  double tstart=laser_sigma_t*sqrt(-2.0*log(tmm_laser_threshold));  
+  //double tstart=laser_sigma_t*sqrt(-2.0*log(tmm_laser_threshold));  
+  double tstart=tau_p * sqrt(-log(tmm_laser_threshold) / (4 * log(2)));
   laser_t_0 = tstart;
   laser_t_0 += 100e-15; // plus 100 fs puffer
 #endif
@@ -166,8 +184,6 @@ int tmm_init()
 #endif
 
     laser_spot_area=(fd_h.y*1e-10*fd_h.z*1e-10);
-    t_FWHM= 2.354820045*laser_sigma_t;
-    t1_FWHM=2.354820045*laser_sigma_t1;
         if(myid==0){
           printf("*****************************************\n");
           printf("*        TRANSFER-MATRIX METHOD         *\n");
@@ -181,9 +197,9 @@ int tmm_init()
           if(tmm_pol==2)
 	        printf("Polarization: P\n");
           printf("I0:%.4e W/m^2\n",I0);
-          printf("t0:%.4e,sigma_t:%.4e\n",laser_t_0,laser_sigma_t);
-          printf("t1:%.4e,sigma_t1:%.4e\n",laser_t_1,laser_sigma_t1);
-          printf("t_FWHM:%.4e, t1_FWHM:%.4e\n", t_FWHM,t1_FWHM);          
+          printf("t0:%.4e\n",laser_t_0);
+          printf("t1:%.4e\n",laser_t_1);
+          printf("t_FWHM:%.4e, t1_FWHM:%.4e\n", tau_p, tau_p1);          
           printf("***************************\n");
 	}
 
@@ -194,11 +210,15 @@ int do_tmm(real dt)
 {  
   int i,iglobal,j;
   double Imp=3.769911184307751e+02; // vacuum impedanz
-  I_t=I0*exp(-pow(tmm_time-laser_t_0,2)/laser_sigma_t_squared);
-  I_t+=I0*exp(-pow(tmm_time-laser_t_1,2)/laser_sigma_t1_squared);
-if(steps<2) return 0;
-  //if(I_t<0.001*I0)
-  if(sqrt(2.0*I_t*Imp)<tmm_laser_threshold* sqrt(2*I0*Imp)) //Elec-field strength threshold
+  I_t=I0*exp(-4*log(2)*pow(tmm_time-laser_t_0,2)/(tau_p*tau_p));
+  I_t+=I0*exp(-4*log(2)*pow(tmm_time-laser_t_1,2)/(tau_p1*tau_p1));
+  
+  if(steps<2) 
+  {
+    return 0;
+  }
+  
+  if (I_t<I0*tmm_laser_threshold)
   {
     laser_active=false;
     return 0;
@@ -237,20 +257,16 @@ if(steps<2) return 0;
    //                2.5, 2e29, &tmm_eps_real_arr_local[iglobal],
    //                &tmm_eps_imag_arr_local[iglobal]);
 
-
-   tmm_get_epsilon(lambda,node.temp, node.md_temp,
+#ifdef TFM
+   tmm_get_epsilon(lambda, node.temp, node.md_temp,
                   node.Z, node.ne, &tmm_eps_real_arr_local[iglobal],
                   &tmm_eps_imag_arr_local[iglobal]);
+#endif
+#ifdef TTT
+    tmm_get_epsilon(lambda, node.temp, node.md_temp, &tmm_eps_real_arr_local[iglobal], &tmm_eps_imag_arr_local[iglobal], node.dens);
+#endif
 
-
-/*
-printf("myid:%d,ig:%d, epsr:%.4e,epsimg:%.4e,Te:%.4e,Ti:%.4e,Ne:%.4e,Z:%.4e,atoms:%d\n",myid,iglobal,
-        tmm_eps_real_arr_local[iglobal],
-        tmm_eps_imag_arr_local[iglobal],
-	l1[i][1][1].temp, l1[i][1][1].md_temp, l1[i][1][1].ne, l1[i][1][1].Z, l1[i][1][1].natoms);
-*/
-
-   tmm_active_cell_local[iglobal]=1; 
+    tmm_active_cell_local[iglobal]=1; 
  } 
 
  MPI_Reduce(&tmm_eps_real_arr_local[0], &tmm_eps_real_arr_global[0],
@@ -355,6 +371,7 @@ if(myid==0)
 	      break;
     }
   }
+
   if(tooshort==1)
   {
     int l;
@@ -365,6 +382,7 @@ if(myid==0)
     error("Sample is too short for TMM.Consider reducing tmm_threshold.");
     MPI_Abort(cpugrid,0);
   }
+
   //tans und refl
   double complex tmpr0=BR/B0;
   tmm_refl=creal(tmpr0)*creal(tmpr0)+cimag(tmpr0)*cimag(tmpr0);
@@ -435,8 +453,7 @@ if(myid==0)
     tmm_Qabs[i]=I_t*k0*tmm_eps_imag_arr_global[i]*(creal(Ez)*creal(Ez)+cimag(Ez)*cimag(Ez));
 */
     tmm_Qabs[i]*=1e10; // W/m^2/Angstrom to W/m^3
-    tmm_Qabs[i]*=6.3538562638e-26; // W/m^3 to imd-units
-   
+    tmm_Qabs[i]*=6.3538562638e-26; // W/m^3 to imd-units   
   }
   free(Bplus);
   free(Bminus);
@@ -448,7 +465,6 @@ MPI_Scatter(&tmm_Qabs[0], local_fd_dim.x-2, MPI_DOUBLE, &tmm_Qabs_scat[0], local
 for(i=1;i<local_fd_dim.x-1;i++)
 {
   node.source=node2.source=tmm_Qabs_scat[i-1];
-  //printf("me:%d,i:%d,src:%.4e\n",myid,i,l1[i][1][1].source);
 }
  return 0;
 }
@@ -497,8 +513,7 @@ eps_dl=-73.655835558841446 +81.545418969195765*I; // testcase, sharp, omegap_L*2
 }
 */
 
-//int tmm_get_epsilon(double lambda, double Te,double Ti, double Z, double Ne, real* re, real* img)
-int tmm_get_epsilon(double lambda, double Te,double Ti, double Z, double Ne, real* re, real* img)
+int tmm_get_epsilon_TFM(double lambda, double Te,double Ti, double Z, double Ne, real* re, real* img)
 {
         Te*=11604.52500617; //ev->K
         Ti*=11604.52500617; //ev->K
@@ -506,8 +521,8 @@ int tmm_get_epsilon(double lambda, double Te,double Ti, double Z, double Ne, rea
         double complex un = 1;
         double complex im = I;
 
-	double omega_las = (2.0 * M_PI * LIGHTSPEED / lambda);  // [1/s]
-	double Ncr = ne_cr(omega_las);                  // [1/m3]
+        double omega_las = (2.0 * M_PI * LIGHTSPEED / lambda);  // [1/s]
+        double Ncr = ne_cr(omega_las);                  // [1/m3]
         double Ni = Ne / Z;                             // [1/m3]
         double EF = fermi_E(Ne);                        // [J]    
         double TF = 2.0 * EF / (3.0 * BOLTZMAN);        // [K] 
@@ -542,7 +557,7 @@ int tmm_get_epsilon(double lambda, double Te,double Ti, double Z, double Ne, rea
 
 
         double complex epsilon_bb = epsl_bb(il) + (epsl_bb(ir) - epsl_bb(il))/ (eps_bb_data[ir][0] - eps_bb_data[il][0])* (lambda*1e6 - eps_bb_data[il][0]);
-        int phase=((int) EOS_phase_from_r_ti(Ni*26.9815*AMU,Ti));
+        int phase=((int) EOS_phase_from_r_ti(Ni*atomic_weight*AMU,Ti));
 
         if( fabs(phase)==3 || fabs(phase)==4 || fabs(phase)==5)
           epsilon_bb=0*I*0;
@@ -588,6 +603,184 @@ double complex eps_dl= epsinf-omega2/(w2+I*gammap*omega_laser) + omegap_L*omegap
 double complex epsl_bb(int bi){
         return eps_bb_data[bi][1] + I* eps_bb_data[bi][2];
 }
+
+#ifdef TTT
+#ifdef MATERIALAL
+int tmm_get_epsilon_Al(double lambda, double Te, double Ti, real* re, real* img, real rho)
+{
+  double E_Fermi = 11.1;  // in eV
+
+  double eta = 0.75;
+  double a0 = 0.49188e15;   // in 1/s
+  double a1 = 1.2;
+  double a2 = 0.8;
+  double p1 = 0.75;
+  double p2 = 2.25;
+
+  double omega_rt_sol = 1.167022e14; // in 1/s
+  double eta_sol = 0.5175;
+
+  double omega_si_liq = 1.09084e15; // in 1/s
+  double eta_liq = 0.4025;
+
+  double omega_D = 16.4868e15;  // in 1/s
+
+  double A_1 = 2.17020801;
+  double A_2 = 3.95505075;
+  double Omega_1 = 2.25028e15;  // in 1/s
+  double Omega_2 = 2.26699e15;  // in 1/s
+  double Gamma_1 = 0.268726e15; // in 1/s
+  double Gamma_2 = 1.16111e15;  // in 1/s
+  double phi_1 = -0.52279535;
+  double phi_2 = 0.12358051;
+
+  double x_rt = 0.991638025594; // 2.71213 / 2.735
+  double x_m = 0.895795246801; // 2.45 / 2.735;
+
+  double T_rt = 0.0258520402; // Room temperature in eV
+  double T_m = 0.080439465748; // 933.5 / 11605 // Careful, this technically depends on the potential
+
+  double x = 1;	// TODO: rho / 2475;  // rho / rho_0 with rho_0 = 2475 kg/m^3
+  double t = 6 * Te / (pow(x, 2/3) * E_Fermi);
+  
+  double omega_se = eta * pow(x, 2/3) * a0 * pow(t, 2) * (1 + a1 * pow(t, p1)) / (1 + a2 * pow(t, p2));
+
+  // Determine whether material is solid or not via phase boundary lines
+  int solid_bool = 1; // 1: Solid, 0: liquid // TODO: Proper evaluation of the state
+
+  double omega_si;
+  if (solid_bool == 1)
+  {
+    double y_bar_x = calc_y_bar(x);
+    double y_bar_x_rt = calc_y_bar(x_rt);
+
+    omega_si = omega_rt_sol * (1 + eta_sol * pow(x_rt, 2/3) * y_bar_x_rt * Ti / (pow(x, 2/3) * y_bar_x * T_rt));
+  }
+  else  // liquid
+  {
+    double beta = calc_beta(Ti);
+    double w_Ti = calc_w(Ti);
+    double w_Tm = calc_w(T_m);
+
+    omega_si = eta_liq * omega_si_liq * pow(x, 2/3) * pow(x_m, beta) * w_Ti / (pow(x_m, 2/3) * pow(x, beta) * w_Tm);
+  }
+
+  double omega_eff = omega_se + omega_si;
+  double omega = 2 * M_PI * LIGHTSPEED / lambda;  // in 1/s
+
+  double complex im = I;
+
+  double complex epsilon_Drude = 1 - x * omega_D * omega_D / (omega * omega + I * omega * omega_eff);
+  double complex epsilon_DCP_1 = x * A_1 * Omega_1 * (exp(I * phi_1) / (Omega_1 - omega - I*Gamma_1)
+                                                    + exp(-I * phi_1) / (Omega_1 + omega + I * Gamma_1));
+  double complex epsilon_DCP_2 = x * A_2 * Omega_2 * (exp(I * phi_2) / (Omega_2 - omega - I*Gamma_2)
+                                                    + exp(-I * phi_2) / (Omega_2 + omega + I * Gamma_2));
+
+  double complex epsilon_tot = epsilon_Drude; // + epsilon_DCP_1 + epsilon_DCP_2;	// TODO: Add DCP
+
+  *re = creal(epsilon_tot);
+  *img = cimag(epsilon_tot);
+
+  return 1;
+}
+#endif // MATERIALAL
+
+#ifdef MATERIALCU
+int tmm_get_epsilon_Cu(double lambda, double Te, double Ti, real* re, real* img, real rho)
+{
+  double E_Fermi = 9.2; // in eV
+
+  // Parmeters from from Ren/Winter et al. for temperature- and density-independent optical properties
+  double epsilon_infinity = 3.686;
+  double omega_D = 1.34e16; // in rad/s, units don't matter here too much since we divide by the conversion factors
+  double gamma = 0.99e14;
+  double B_1 = 0.562;
+  double B_2 = 27.36;
+  double B_3 = 0.242;
+  double phi_1 = -8.185;
+  double phi_2 = 0.226;
+  double phi_3 = -0.516;
+  double Omega_1 = 3.205e15; // in rad/s
+  double Omega_2 = 3.43e15;
+  double Omega_3 = 7.33e15;
+  double Gamma_1 = 0.404e15; // in rad/s
+  double Gamma_2 = 0.77e16;
+  double Gamma_3 = 1.12e15;
+
+  // Extensions of optical properties by Winter et al.
+  double T_rt = 0.0252488;  // 293 K in eV
+  double T_m = 0.1006514714; // 1168.01 / 11604.5 // NOTE: This depends on the potential, this is the value of the unexcited ANA potential
+
+  double C_dc = 1.79;
+  double C_b = 1.031;
+  double eta = 0.32;
+  double beta_1 = 2.5e-2; // in 1/K
+  double beta_2 = 3.5e-5; // in 1/K
+  double n_at = 8.5e28; // in 1/m^3
+  double m_opt = 2.63 * EMASS; // in kg
+
+  double x = rho / 8628;  // rho / rho_rt with rho_rt = 8628 kg/m^3
+  double t = 6 * Te / (x * E_Fermi);
+
+  // Temperature and density-dependent Drude
+  double omega_ss = 0.623 * x * t * t * (1 + 4.034 * pow(t, 0.7439)) * 1.0e15 / (1 + 1.2178 * pow(t, 2.0939)); // Also convert from 1/fs to 1/s
+  double omega_sd = 5.32 * x * exp(-1.738 / t) * (1 + 1.64 * pow(t, -0.761)) * 1.0e15 / (1 + 0.0384 * pow(t, 0.673)); // Also convert from 1/fs to 1/s
+  double omega_si = (C_dc + C_b * (1 - pow(MIN(Ti/T_m, 1), 0.5))) * Ti / 6.582119569e-16; // Last value is the reduced Planck's constant in eV * s
+  double omega_eff = eta * (omega_ss + omega_sd) + omega_si;
+
+  // Temperature-dependent collisions frequencies for DCP
+  Gamma_1 *= (1 + beta_1 * (Ti - T_rt) * 11604.5);
+  Gamma_2 *= (1 + beta_2 * (Ti - T_rt) * 11604.5);
+
+  // Temperature and density-dependent plasma frequency
+  // MYMOD: Simon, 17.12.2025
+  double N_e;
+  if (Te<=0.5)
+  {
+    N_e = 1.9;
+  }
+  else
+  {
+    N_e = 1.9 + 0.1485*(Te - 0.5);
+  }
+  // ENDOF MYMOD
+
+  double omega_p = sqrt(N_e * n_at * ECHARGE * ECHARGE * x / (8.854188e-12 * m_opt));
+  omega_D = omega_p;
+  double omega = 2 * M_PI * LIGHTSPEED / lambda;  // in 1/s
+
+  // MYMOD: Simon, 12.02.2026
+  double epsilon_Drude_real = epsilon_infinity - pow(omega_D, 2) / (pow(omega, 2) + pow(omega_eff, 2));
+  double epsilon_Drude_imaginary = pow(omega_D, 2) * omega_eff / (pow(omega, 3) + pow(omega_eff, 2) * omega);
+
+  double epsilon_DCP_11_real = B_1 * Omega_1 * (cos(phi_1) * (Omega_1 - omega) - sin(phi_1) * Gamma_1) / (pow(Omega_1 - omega, 2) + pow(Gamma_1, 2));
+  double epsilon_DCP_12_real = B_1 * Omega_1 * (cos(phi_1) * (Omega_1 + omega) - sin(phi_1) * Gamma_1) / (pow(Omega_1 + omega, 2) + pow(Gamma_1, 2));
+  double epsilon_DCP_21_real = B_2 * Omega_2 * (cos(phi_2) * (Omega_2 - omega) - sin(phi_2) * Gamma_2) / (pow(Omega_2 - omega, 2) + pow(Gamma_2, 2));
+  double epsilon_DCP_22_real = B_2 * Omega_2 * (cos(phi_2) * (Omega_2 + omega) - sin(phi_2) * Gamma_2) / (pow(Omega_2 + omega, 2) + pow(Gamma_2, 2));
+  double epsilon_DCP_31_real = B_3 * Omega_3 * (cos(phi_3) * (Omega_3 - omega) - sin(phi_3) * Gamma_3) / (pow(Omega_3 - omega, 2) + pow(Gamma_3, 2));
+  double epsilon_DCP_32_real = B_3 * Omega_3 * (cos(phi_3) * (Omega_3 + omega) - sin(phi_3) * Gamma_3) / (pow(Omega_3 + omega, 2) + pow(Gamma_3, 2));
+
+  double epsilon_DCP_11_imaginary = B_1 * Omega_1 * (sin(phi_1) * (Omega_1 - omega) + cos(phi_1) * Gamma_1) / (pow(Omega_1 - omega, 2) + pow(Gamma_1, 2));
+  double epsilon_DCP_12_imaginary = B_1 * Omega_1 * (-(sin(phi_1) * (Omega_1 + omega) + cos(phi_1) * Gamma_1)) / (pow(Omega_1 + omega, 2) + pow(Gamma_1, 2));
+  double epsilon_DCP_21_imaginary = B_2 * Omega_2 * (sin(phi_2) * (Omega_2 - omega) + cos(phi_2) * Gamma_2) / (pow(Omega_2 - omega, 2) + pow(Gamma_2, 2));
+  double epsilon_DCP_22_imaginary = B_2 * Omega_2 * (-(sin(phi_2) * (Omega_2 + omega) + cos(phi_2) * Gamma_2)) / (pow(Omega_2 + omega, 2) + pow(Gamma_2, 2));
+  double epsilon_DCP_31_imaginary = B_3 * Omega_3 * (sin(phi_3) * (Omega_3 - omega) + cos(phi_3) * Gamma_3) / (pow(Omega_3 - omega, 2) + pow(Gamma_3, 2));
+  double epsilon_DCP_32_imaginary = B_3 * Omega_3 * (-(sin(phi_3) * (Omega_3 + omega) + cos(phi_3) * Gamma_3)) / (pow(Omega_3 + omega, 2) + pow(Gamma_3, 2));
+
+  double complex epsilon_tot_real = epsilon_Drude_real + x * (epsilon_DCP_11_real + epsilon_DCP_12_real + epsilon_DCP_21_real + \
+                                                              epsilon_DCP_22_real + epsilon_DCP_31_real + epsilon_DCP_32_real);
+  double complex epsilon_tot_imaginary = epsilon_Drude_imaginary + x * (epsilon_DCP_11_imaginary + epsilon_DCP_12_imaginary + epsilon_DCP_21_imaginary + \
+                                                                        epsilon_DCP_22_imaginary + epsilon_DCP_31_imaginary + epsilon_DCP_32_imaginary);
+  // ENDOF MYMOD
+
+  *re = epsilon_tot_real;
+  *img = epsilon_tot_imaginary;
+
+  return 1;
+}
+#endif // MATERIALCU
+#endif // TTT
+
 
 int tmm_read_arr(char* infilename,double ***arr,int cols,int *rowsout)
 {

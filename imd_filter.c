@@ -192,7 +192,7 @@ void filter_atoms(void)
 	{
 	  delcnt++;
 //DEBUG zu Visualisierungszwecken
-//MASSE(p,l)=26.91;
+//MASSE(p,l)=atomic_weight;
 //DELME(p,l)=0;
 	}
       }

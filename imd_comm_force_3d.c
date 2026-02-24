@@ -773,8 +773,9 @@ void copy_cell( int k, int l, int m, int r, int s, int t, vektor v )
     to->fdk[i]=from->fdk[i];
 #endif
 
-#ifdef LOD
-    LODP(to,i)   =LODP(from,i);
+#ifdef LOP
+    LOPI(to,i)   =LOPI(from,i);
+    LOPN(to,i)   =LOPN(from,i);
 #endif
 
 
@@ -858,8 +859,9 @@ void pack_cell( msgbuf *b, int k, int l, int m, vektor v )
     b->data[j++]= (real) from->fdk[i];
 #endif
 
-#ifdef LOD
-    b->data[ j++]  = LODP(from,i);
+#ifdef LOP
+    b->data[ j++]  = LOPI(from,i);
+    b->data[ j++]  = LOPN(from,i);
 #endif
 #ifdef NRB
     b->data[ j++]  = (real) NRBI(from,i,0);
@@ -954,8 +956,9 @@ void unpack_cell( msgbuf *b, int k, int l, int m )
     to->fdj[i]=b->data[j++];
     to->fdk[i]=b->data[j++];
 #endif
-#ifdef LOD
-    LODP(to,i)  = b->data[ j++];
+#ifdef LOP
+    LOPI(to,i)  = b->data[ j++];
+    LOPN(to,i)  = b->data[ j++];
 #endif
 
 #ifdef NRB
@@ -1173,6 +1176,131 @@ void unpack_forces( msgbuf *b, int k, int l, int m )
     error("Buffer overflow in unpack_forces - increase msgbuf_size");
 }
 
+
+#ifdef ANA
+
+/******************************************************************************
+*
+*  copy ana_dF of one cell to another cell
+*
+******************************************************************************/
+
+void copy_dF_ana( int k, int l, int m, int r, int s, int t, vektor v )
+{
+  int i;
+  minicell *from, *to;
+
+  from = PTR_3D_V(cell_array, k, l, m, cell_dim);
+  to   = PTR_3D_V(cell_array, r, s, t, cell_dim);
+
+  for (i=0; i<to->n; ++i) {
+    ANA_DF    (to,i)    = ANA_DF    (from,i);
+  }
+}
+
+/******************************************************************************
+*
+*  add ana_rho of one cell to another cell
+*
+******************************************************************************/
+
+void add_rho_ana( int k, int l, int m, int r, int s, int t )
+{
+  int i;
+  minicell *from, *to;
+
+  from = PTR_3D_V(cell_array, k, l, m, cell_dim);
+  to   = PTR_3D_V(cell_array, r, s, t, cell_dim);
+
+  for (i=0; i<to->n; ++i) {
+    ANA_RHO(to,i) += ANA_RHO(from,i);
+  }
+}
+
+/******************************************************************************
+*
+*  pack ana_dF into MPI buffer
+*
+******************************************************************************/
+void pack_dF_ana( msgbuf *b, int k, int l, int m, vektor v )
+{
+  int i, j = b->n;
+  minicell *from;
+
+  from = PTR_3D_V(cell_array, k, l, m, cell_dim);
+
+  for (i=0; i<from->n; ++i) {
+    b->data[ j++ ] = ANA_DF    (from,i);
+  }
+  b->n = j;
+  if (b->n_max < b->n)
+    error("Buffer overflow in pack_dF_ana - increase msgbuf_size");
+}
+
+/******************************************************************************
+*
+*  pack ana_rho into MPI buffer
+*
+******************************************************************************/
+
+void pack_rho_ana( msgbuf *b, int k, int l, int m )
+{
+  int i, j = b->n;
+  minicell *from;
+
+  from = PTR_3D_V(cell_array, k, l, m, cell_dim);
+
+  for (i=0; i<from->n; ++i) {
+    b->data[ j++ ] = ANA_RHO(from,i);
+  }
+  b->n = j;
+  if (b->n_max < b->n)
+    error("Buffer overflow in pack_rho_ana - increase msgbuf_size");
+}
+
+/******************************************************************************
+*
+*  unpack ana_dF from MPI buffer into cell
+*
+******************************************************************************/
+
+void unpack_dF_ana( msgbuf *b, int k, int l, int m )
+{
+  int i, j = b->n;
+  minicell *to;
+
+  to = PTR_3D_V(cell_array, k, l, m, cell_dim);
+
+  for (i=0; i<to->n; ++i) {
+    ANA_DF    (to,i)    = b->data[ j++ ];
+  }
+  b->n = j;
+  if (b->n_max < b->n)
+    error("Buffer overflow in unpack_dF_ana - increase msgbuf_size");
+}
+
+/******************************************************************************
+*
+*  unpack and add add_rho from MPI buffer into cell
+*
+******************************************************************************/
+
+void unpack_add_rho_ana( msgbuf *b, int k, int l, int m )
+{
+  int i, j = b->n;
+  minicell *to;
+
+  to = PTR_3D_V(cell_array, k, l, m, cell_dim);
+
+  for (i=0; i<to->n; ++i) {
+    ANA_RHO(to,i) += b->data[ j++ ];
+  }
+  b->n = j;
+  if (b->n_max < b->n)
+    error("Buffer overflow in unpack_add_rho_ana - increase msgbuf_size");
+}
+
+#endif // ANA
 
 #ifdef EAM2
 

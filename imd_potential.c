@@ -128,6 +128,13 @@ void setup_potentials( void )
 #ifdef NEB
   MPI_Barrier(MPI_COMM_WORLD);
 #endif
+  
+#ifdef ANA
+  cellsz = ana_cutoff*ana_cutoff;
+#ifdef MPI
+  MPI_Bcast( &cellsz, 1, REAL, 0, MPI_COMM_WORLD);
+#endif // MPI
+#endif // ANA
 }
 
 /*****************************************************************************

@@ -3216,6 +3216,9 @@ void write_header_config(FILE *out)
     fprintf(out, "#F %c 1 1 1 %d %d ", c, DIM, 0  );
   else
     fprintf(out, "#F %c 1 1 1 %d %d ", c, DIM, DIM);
+#if defined(ANA) && !defined(NORHOH)
+  atompar++;
+#endif // ANA
 #if defined(EAM2) && !defined(NORHOH)
   atompar++;
 #ifdef EEAM
@@ -3240,9 +3243,9 @@ void write_header_config(FILE *out)
 #if defined(VARCHG) || defined(EWALD) || defined(USEFCS)
   atompar++;
 #endif
-//MYMOD local order parameter
-#ifdef LOD
-  atompar++;
+#ifdef LOP
+  atompar++;  // LOPI
+  atompar++;  // LOPN
 #endif
 #ifdef ADA
   atompar++;
@@ -3288,9 +3291,8 @@ void write_header_config(FILE *out)
 #if defined(VARCHG) || defined(EWALD) || defined(USEFCS)
   fprintf(out, " charge" );
 #endif
-//MYMOD local order param
-#ifdef LOD
-  fprintf(out," lod");
+#ifdef LOP
+  fprintf(out," lopi lopn");
 #endif
 #ifdef NNBR
   fprintf(out, " n_nbr" );
@@ -3309,6 +3311,9 @@ void write_header_config(FILE *out)
   fprintf(out, " x_ref y_ref z_ref Epot_ref" );
 #endif
 #endif
+#if defined(ANA) && !defined(NORHOH)
+  fprintf(out, " ana_rho" );
+#endif // ANA
 #if defined(EAM2) && !defined(NORHOH)
   fprintf(out, " eam_rho" );
 #ifdef EEAM
@@ -3451,9 +3456,9 @@ int read_header(header_info_t *info, str255 infilename)
 #ifdef VARCHG
   info->n_charge   = -1;
 #endif
-//MYMOD local order param
-#ifdef LOD
-  info->n_lod	   = -1;
+#ifdef LOP
+  info->n_lopi      = -1;
+  info->n_lopn      = -1;
 #endif
 #ifdef VISCOUS
   info->n_viscfriction = -1;
@@ -3502,10 +3507,12 @@ int read_header(header_info_t *info, str255 infilename)
           info->n_charge = count;
         }
 #endif
-//MYMOD local oder param
-#ifdef LOD
-        if (strcmp(token, "lod")==0) {
-          info->n_lod = count;
+#ifdef LOP
+        if (strcmp(token, "lopi")==0) {
+          info->n_lopi = count;
+        }
+        if (strcmp(token, "lopn")==0) {
+          info->n_lopn = count;
         }
 #endif
 #ifdef VISCOUS
@@ -3584,9 +3591,9 @@ void broadcast_header(header_info_t *info)
 #ifdef VARCHG
   MPI_Bcast( &(info->n_charge),   1, MPI_INT,  0, MPI_COMM_WORLD); 
 #endif
-//MYMOD local order param
-#ifdef LOD
-  MPI_Bcast( &(info->n_lod),   1, MPI_INT,  0, MPI_COMM_WORLD);
+#ifdef LOP
+  MPI_Bcast( &(info->n_lopi),     1, MPI_INT,  0, MPI_COMM_WORLD);
+  MPI_Bcast( &(info->n_lopn),     1, MPI_INT,  0, MPI_COMM_WORLD);
 #endif
 #ifdef VISCOUS
   MPI_Bcast( &(info->n_friction),   1, MPI_INT,  0, MPI_COMM_WORLD);

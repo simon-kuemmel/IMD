@@ -190,7 +190,7 @@ void do_colrad(double dt)
         Te0=l1[i][j][k].temp*11604.5;
         Ti0=l1[i][j][k].md_temp*11604.5;        
         rho0=l1[i][j][k].dens;
-        ni0=rho0/AMU/26.9185; //1e28; //1e26/m^3 entspricht etwa 1e-4/Angtrom^3   
+        ni0=rho0/AMU/atomic_weight; //1e28; //1e26/m^3 entspricht etwa 1e-4/Angtrom^3   
 
         if(cdata->initial_equi==true)     
         {
@@ -499,7 +499,7 @@ void colrad_Saha_init(int i,int j,int k)
         Te0=l1[i][j][k].temp*11604.5;
         Ti0=l1[i][j][k].md_temp*11604.5;        
         rho0=l1[i][j][k].dens; ///1e10;
-        ni0=rho0/AMU/26.9185; //1e28; //1e26/m^3 entspricht etwa 1e-4/Angtrom^3        
+        ni0=rho0/AMU/atomic_weight; //1e28; //1e26/m^3 entspricht etwa 1e-4/Angtrom^3        
         ne0=l1[i][j][k].ne;
 
         Ith(y,0)=Te0;
@@ -3129,7 +3129,7 @@ double StarkWidth(double nu,double nl,double Te,double Ti,double Tr,double Ne,do
   Te=Te*eV2H;
   Ti=Ti*eV2H;
   Tr=Tr*eV2H; //radiators temp.
-  double mi=26.981*AMU/EMASS; //mass in units of emass
+  double mi=atomic_weight*AMU/EMASS; //mass in units of emass
   double me=1.0;
   double mr=1.0*AMU/EMASS;
   double ve=sqrt(Te/me);

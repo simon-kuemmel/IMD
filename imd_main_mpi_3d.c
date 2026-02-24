@@ -79,16 +79,17 @@ void calc_forces(int steps)
       KRAFT(p,i,Y) = 0.0;
       KRAFT(p,i,Z) = 0.0;
 
-//MYMOD
 #ifdef TTM
-//#ifndef NBL //mit NBL wird NUMNEIGHS in imd_forces_nbl.c gecleart
+// MYMOD: Simon, 31.03.2025, the following ifdef/endif was commented out but should still work
+#ifndef NBL //mit NBL wird NUMNEIGHS in imd_forces_nbl.c gecleart
       NUMNEIGHS(p,i)=0;
-//#endif
 #endif
-#ifdef LOD
-      LODP(p,i)=0;
+// END MYMOD
 #endif
-//ENDOF MYMOD
+#ifdef LOP
+      LOPI(p,i)=0.0;
+      LOPN(p,i)=0.0;
+#endif // LOP
 
 #ifdef UNIAX
       DREH_MOMENT(p,i,X) = 0.0;
@@ -116,6 +117,9 @@ void calc_forces(int steps)
 #ifdef COVALENT
       NEIGH(p,i)->n = 0;
 #endif
+#ifdef ANA
+      ANA_RHO(p,i) = 0.0; /* zero host electron density at atom site */
+#endif // ANA
 #ifdef EAM2
       EAM_RHO(p,i) = 0.0; /* zero host electron density at atom site */
 #ifdef EEAM
@@ -238,6 +242,72 @@ if(steps>0)
     }
   }
 #endif  /* not AR */
+
+#ifdef ANA
+
+#ifdef AR
+  /* collect host electron density */
+  send_forces(add_rho_ana, pack_rho_ana, unpack_add_rho_ana);
+#endif
+  /* compute embedding energy and its derivative */
+  do_embedding_energy_ana();
+  /* distribute derivative of embedding energy */
+  send_cells(copy_dF_ana, pack_dF_ana, unpack_dF_ana);
+
+  /* second ANA loop over all cells pairs */
+  for (n=0; n<nlists; ++n) {
+    for (k=0; k<npairs[n]; ++k) {
+      vektor pbc;
+      pair *P;
+      P = pairs[n]+k;
+      pbc.x = P->ipbc[0]*box_x.x + P->ipbc[1]*box_y.x + P->ipbc[2]*box_z.x;
+      pbc.y = P->ipbc[0]*box_x.y + P->ipbc[1]*box_y.y + P->ipbc[2]*box_z.y;
+      pbc.z = P->ipbc[0]*box_x.z + P->ipbc[1]*box_y.z + P->ipbc[2]*box_z.z;
+      do_forces_ana(cell_array + P->np, cell_array + P->nq, pbc,
+        &virial, &vir_xx, &vir_yy, &vir_zz, &vir_yz, &vir_zx, &vir_xy);
+    }
+  }
+
+#ifndef AR
+  /* If we don't use actio=reactio accross the cpus, we have do do
+     the force loop also on the other half of the neighbours for the 
+     cells on the surface of the CPU */
+
+  /* compute forces for remaining pairs of cells */
+  for (n=0; n<nlists; ++n) {
+    for (k=npairs[n]; k<npairs2[n]; ++k) {
+      vektor pbc;
+      pair *P;
+      P = pairs[n]+k;
+      pbc.x = P->ipbc[0]*box_x.x + P->ipbc[1]*box_y.x + P->ipbc[2]*box_z.x;
+      pbc.y = P->ipbc[0]*box_x.y + P->ipbc[1]*box_y.y + P->ipbc[2]*box_z.y;
+      pbc.z = P->ipbc[0]*box_x.z + P->ipbc[1]*box_y.z + P->ipbc[2]*box_z.z;
+      /* potential energy and virial are already complete;          */
+      /* to avoid double counting, we update only the dummy tmpvec2 */
+
+//MY MOD: Hier ist ein Fehler durch kopieren von 2ten do_forces(..) entstanden!
+//	  do_forces_eam2 hat 1 parameter weniger: tmpvec2 entspricht nämlich tot_pot_eng,
+// 	  was es hier nicht gibt!	 
+/*
+      do_forces_eam2(cell_array + P->np, cell_array + P->nq, pbc,
+                     tmpvec2, tmpvec2+1, tmpvec2+2, tmpvec2+3, tmpvec2+4,
+                                         tmpvec2+5, tmpvec2+6, tmpvec2+7);
+*/
+      do_forces_ana(cell_array + P->np, cell_array + P->nq, pbc,
+                     tmpvec2+1, tmpvec2+2, tmpvec2+3, tmpvec2+4,
+                                         tmpvec2+5, tmpvec2+6, tmpvec2+7);
+
+    }
+  }
+#endif /* not AR */
+
+#ifdef ANAT
+  // The reference energy using ANAT isn't fixed yet. 
+  // We now have to shift the potential energies so that the reference energy is the same everywhere
+  correct_energy_anat();
+#endif
+
+#endif // ANA
 
 #ifdef EAM2
 
