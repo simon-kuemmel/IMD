@@ -148,8 +148,19 @@ void do_forces(cell *p, cell *q, vektor pbc, real *Epot, real *Virial,
 #endif // LOP
 
 #ifdef TTM
+#ifdef MATERIALAC
+        if (SORTE(q, j)==0{
+          NUMNEIGHS_AL(p, i)++;
+          NUMNEIGHS_AL(q, j)++;
+        }
+        else{
+          NUMNEIGHS_CU(p, i)++;
+          NUMNEIGHS_CU(q, j)++;
+        }
+#else
         NUMNEIGHS(p,i)++;
         NUMNEIGHS(q,j)++;
+#endif // MATERIALAC
 #endif
 
 #ifdef ANAT

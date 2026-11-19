@@ -767,7 +767,13 @@ void copy_cell( int k, int l, int m, int r, int s, int t, vektor v )
 #endif
 //MYMOD
 #ifdef TTM
+#ifdef MATERIALAC
+    NUMNEIGHS_AL(to,i)   =NUMNEIGHS_AL(from,i);
+    NUMNEIGHS_CU(to,i)   =NUMNEIGHS_CU(from,i);
+#else
     NUMNEIGHS(to,i)   =NUMNEIGHS(from,i);
+#endif // MATERIALAC
+    
     to->fdi[i]=from->fdi[i];
     to->fdj[i]=from->fdj[i];
     to->fdk[i]=from->fdk[i];
@@ -853,7 +859,13 @@ void pack_cell( msgbuf *b, int k, int l, int m, vektor v )
 #endif
 //MYMOD
 #ifdef TTM
+#ifdef MATERIALAC
+    b->data[ j++]  = (real) NUMNEIGHS_AL(from,i);
+    b->data[ j++]  = (real) NUMNEIGHS_CU(from,i);
+#else
     b->data[ j++]  = (real) NUMNEIGHS(from,i);
+#endif // MATERIALAC
+    
     b->data[j++]= (real) from->fdi[i]; //global fd-cell indices for advection step
     b->data[j++]= (real) from->fdj[i];
     b->data[j++]= (real) from->fdk[i];
@@ -951,7 +963,13 @@ void unpack_cell( msgbuf *b, int k, int l, int m )
 #endif
 //MYMOD
 #ifdef TTM
+#ifdef MATERIALAC
+    NUMNEIGHS_AL(to,i)  = b->data[ j++];
+    NUMNEIGHS_CU(to,i)  = b->data[ j++];
+#else
     NUMNEIGHS(to,i)  = b->data[ j++];
+#endif // MATERIALAC
+    
     to->fdi[i]=b->data[j++]; //global fd-cell indices for advection step
     to->fdj[i]=b->data[j++];
     to->fdk[i]=b->data[j++];
@@ -1044,7 +1062,12 @@ void add_forces( int k, int l, int m, int r, int s, int t )
 #endif
 //MYMOD NUMNEIGHS
 #ifdef TTM
+#ifdef MATERIALAC
+    NUMNEIGHS_AL(to,i)+=NUMNEIGHS_AL(from,i);
+    NUMNEIGHS_CU(to,i)+=NUMNEIGHS_CU(from,i);
+#else
     NUMNEIGHS(to,i)+=NUMNEIGHS(from,i);
+#endif // MATERIALAC
 #endif
 #ifdef NRB
     if(NRBBND(to,i)>0)
@@ -1100,7 +1123,12 @@ void pack_forces( msgbuf *b, int k, int l, int m)
 
 //MYMOD
 #ifdef TTM
+#ifdef MATERIALAC
+    b->data[ j++ ] = (real) NUMNEIGHS_AL(from,i);
+    b->data[ j++ ] = (real) NUMNEIGHS_CU(from,i);
+#else
    b->data[ j++ ] = (real) NUMNEIGHS(from,i);
+#endif // MATERIALAC
 #endif
 #ifdef NRB
     b->data[j++]=IMPULS(from,i,X);
@@ -1155,7 +1183,12 @@ void unpack_forces( msgbuf *b, int k, int l, int m )
 
 //MYMOD
 #ifdef TTM
+#ifdef MATERIALAC
+    NUMNEIGHS_AL(to,i)+=(int) b->data[j++];
+    NUMNEIGHS_CU(to,i)+=(int) b->data[j++];
+#else
     NUMNEIGHS(to,i)+=(int) b->data[j++];
+#endif // MATERIALAC
 #endif
 #ifdef NRB
     real px=b->data[j++];

@@ -148,11 +148,12 @@ int init_nrb() //nrb_eps=Abstands-toleranz in Angstrom,alat=Lattice const.
   real *qptr;
   real nd=nrb_alat/2.0; //component-wise neighbor-distance
   
-//  nrbk=0.3; //0.82905; // u/imdtime^2 ? u^2/imdtime^2
-//  nrbk=0.9;
-//  nrbk=1.2;
   //der coeff fuer die matrizen ist sqrt(k/m)
+#ifdef MATERIALAC
+  nrbk=sqrt(nrbk/atomic_weight[0]);
+#else
   nrbk=sqrt(nrbk/atomic_weight);
+#endif // MATERIALAC
 
   if(imdrestart>0)
   {
@@ -171,9 +172,14 @@ int init_nrb() //nrb_eps=Abstands-toleranz in Angstrom,alat=Lattice const.
     printf("* USING PAIR\n");    
 #endif    
 
-    printf("* nrb_alat:%.4e\n",nrb_alat);
-    printf("* nrb_eps: %.4e\n",nrb_eps);
-    printf("* nrb_k: %.4e\n",pow(nrbk,2.0)*atomic_weight);
+    printf("* nrb_alat: %f Angstrom\n", nrb_alat);
+    printf("* nrb_eps: %f\n", nrb_eps);
+#ifdef MATERIALAC
+    printf("* nrb_k: %f eV/Angstrom^2\n", pow(nrbk, 2.0)*atomic_weight[0]);
+#else
+    printf("* nrb_k: %f eV/Angstrom^2\n", pow(nrbk, 2.0)*atomic_weight);
+#endif // MATERIALAC
+
     if(nrb_readfile==1)
     {
       printf("* reading non-restart input-file: %s\n",nrb_input_file);
@@ -803,7 +809,12 @@ int nrb_forces(void)
 
   int k;
 
+#ifdef MATERIALAC
+  double mass=atomic_weight[0]; // NOTE: For MATERIALAC, we assume that the back surface is purely made of Al.
+                                // NOTE: This must not necessarily be true and works even for alpha-AlCu
+#else
   double mass=atomic_weight; // TODO: weiter unten einfach mit MASSE(p,i) tauschen.Caution: checken ob auch sinnvolle werte geliefert werden
+#endif // MATERIALAC
   int i;               //       denn manche zellen sind nur buffer-zellen
   for(i=0;i<12;i++)
   {

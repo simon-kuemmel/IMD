@@ -349,7 +349,12 @@ EXTERN real AMU INIT(1.660539040200000e-27);	   // Atomic mass unit in kg
 EXTERN real BOHR INIT(5.29e-10); //Bohr radius
 
 //ACHTUNG: Bcast mit REAL (nicht MPI_REAL !!!)
+#ifdef MATERIALAC
+EXTERN real *atomic_weight INIT(NULL);
+#else
 EXTERN real  atomic_weight INIT(0.0); // matom
+#endif // MATERIALAC
+
 EXTERN real  atomic_charge INIT(0.0); //z0
 #ifdef FDTD
 EXTERN real  Sc_FDTD	   INIT(1.0); //
@@ -462,7 +467,12 @@ EXTERN double nrb_ylo INIT(-9e9);
 //ACHTUNG: In C gibt's (im gegensatz zu c++)
 //	   leider kein MPI_COMPLEX_DOUBLE datentyp
 //	   Deswegen der umständliche weg mit jeweils einem array für real und eines für imag
+#ifdef MATERIALAC
+EXTERN int *natomsglobal_Al;
+EXTERN int *natomsglobal_Cu;
+#else
 EXTERN int *natomsglobal;
+#endif // MATERIALAC
 
 EXTERN double  tm2_absorption_threshold INIT(20.0);
 EXTERN double* tm2_eps_real_arr_local;
@@ -491,8 +501,18 @@ EXTERN double tm2_theta INIT(0.0);
 EXTERN int    tm2_pol INIT(0);
 EXTERN double tm2_laser_threshold INIT(1e-5); //ab wann laser aktivieren?
 EXTERN double lambda_ball INIT(0.0); // Ballistic penetration depth
+
+EXTERN int    eps_bb_rows INIT(0);
+EXTERN double  **K12;
+EXTERN int    K12_rows INIT(0);
+EXTERN double  **eps_bb_data;
 #endif
 // END MYMOD
+
+#ifdef BALLISTIC
+EXTERN double* q_stored; //fuer BALLISTIC und FERMI_RESPONSE
+EXTERN double* q_stored_adv; //fuer BALLISTIC und FERMI_RESPONSE
+#endif // BALLISTIC
 
 #ifdef TMM
 //double complex* tmm_eps_arr_local;
@@ -500,9 +520,12 @@ EXTERN double lambda_ball INIT(0.0); // Ballistic penetration depth
 //ACHTUNG: In C gibt's (im gegensatz zu c++)
 //	   leider kein MPI_COMPLEX_DOUBLE datentyp
 //	   Deswegen der umständliche weg mit jeweils einem array für real und eines für imag
-EXTERN double* q_stored; //fuer BALLISTIC und FERMI_RESPONSE
-EXTERN double* q_stored_adv; //fuer BALLISTIC und FERMI_RESPONSE
+#ifdef MATERIALAC
+EXTERN int *natomsglobal_Al;
+EXTERN int *natomsglobal_Cu;
+#else
 EXTERN int *natomsglobal;
+#endif // MATERIALAC
 
 EXTERN double  tmm_absorption_threshold INIT(20.0);
 EXTERN double* tmm_eps_real_arr_local;
@@ -1258,9 +1281,10 @@ EXTERN real tot_elec_energy_local INIT(0.0);  //total internal energy of
 EXTERN real tot_elec_energy_global INIT(0.0); //electrons (DEBUG PURPOSE)
 EXTERN int diff_substeps INIT(100);
 
+EXTERN double tau_relax; // Electron relaxation time for BALLISTIC, TODO: ifdef BALLISTIC?
+
 //For convenience 
 EXTERN real J2eV   INIT(6.2415090744607626077762409809304458998869658961709711e18);
-
 EXTERN real eV2J   INIT(1.602176634E-19);
 
 EXTERN real densSI INIT(1660.53907); //u/Angstrom^3 --> kg/m^3

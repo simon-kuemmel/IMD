@@ -32,7 +32,16 @@
                     // NOTE: This might be too small but should be fine. 
                     // No extrapolation needed if this value is the same as the lowest density in the files
 
+#ifdef TFM
+#define tm2_get_epsilon tm2_get_epsilon_TFM
+#endif
 #ifdef TTT
+#ifdef MATERIALAL // Al
+#define tm2_get_epsilon tm2_get_epsilon_Al
+#define calc_y_bar calc_y_bar_Al
+#define calc_beta calc_beta_Al
+#define calc_w calc_w_Al
+#endif // MATERIALAL
 #ifdef MATERIALCU // Cu
 #define tm2_get_epsilon tm2_get_epsilon_Cu
 #define calc_y_bar calc_y_bar_Cu
@@ -52,6 +61,11 @@ int tm2_init()
   alloc1darr(real,tm2_eps_real_arr_local,global_fd_dim.x);
   alloc1darr(real,tm2_eps_imag_arr_local,global_fd_dim.x);
   alloc1darr(real,tm2_alpha_arr_local,global_fd_dim.x);
+  
+#ifdef TFM
+  tm2_read_arr(eps_filename,&eps_bb_data,3,&eps_bb_rows);
+  tm2_read_arr(k12_filename,&K12,2,&K12_rows); //K1 und K1 num.eval.integrale
+#endif
 
   alloc1darr(int,tm2_active_cell_global,global_fd_dim.x);
   alloc1darr(int,tm2_active_cell_local,global_fd_dim.x);
@@ -91,24 +105,33 @@ int tm2_init()
 #endif
 
   laser_spot_area=(fd_h.y*1e-10*fd_h.z*1e-10);
+
   if(myid==0){
     printf("*****************************************\n");
     printf("*        TRANSFER-MATRIX METHOD         *\n");
     printf("*****************************************\n");
-    printf("lambda:%.4e\n",lambda);
-    printf("theta:%f (deg)\n", tm2_theta);
-    printf("tm2_absorption_threshold:%f\n",tm2_absorption_threshold);
-    printf("tm2_laser_threshold:%f\n",tm2_laser_threshold);
+    printf("lambda: %f nm\n", lambda*1.0e9);
+    printf("theta: %f deg\n", tm2_theta);
+    printf("tm2_absorption_threshold: %f\n", tm2_absorption_threshold);
+    printf("tm2_laser_threshold: %f\n", tm2_laser_threshold);
 
     if(tm2_pol==1)
       printf("Polarization: S\n");
     if(tm2_pol==2)
+      printf("Polarization: P\n");
 
-    printf("Polarization: P\n");
-    printf("I0:%.4e W/m^2\n",I0);
-    printf("t0:%.4e\n",laser_t_0);
-    printf("t1:%.4e\n",laser_t_1);
-    printf("t_FWHM:%.4e, t1_FWHM:%.4e\n", t_FWHM,t1_FWHM);
+    printf("I0: %.4e W/m^2\n", I0); // TODO: %f or %.4e
+    printf("t0: %f fs\n", laser_t_0*1.0e15);
+    printf("t1: %f fs\n", laser_t_1*1.0e15);
+    printf("t_FWHM: %f fs, t1_FWHM: %f fs\n", tau_p*1.0e15, tau_p1*1.0e15);
+
+#ifdef BALLISTIC
+    printf("tau_relax: %f fs, lambda_ball: %f nm\n", tau_relax*1.0e15, lambda_ball*1.0e9);
+#else
+    if (lambda_ball>0)
+      printf("tau_relax: %f fs, lambda_ball: %f nm\n", tau_relax*1.0e15, lambda_ball*1.0e9);
+#endif
+
     printf("***************************\n");
   }
 
@@ -157,10 +180,15 @@ int do_tm2(real dt)
       continue;
     }
 
+#ifdef TFM
+    tm2_get_epsilon(lambda, node.temp, node.md_temp,
+                    node.Z, node.ne, &tm2_eps_real_arr_local[iglobal],
+                    &tm2_eps_imag_arr_local[iglobal]);
+#else
+#ifdef TTT
     tm2_get_epsilon(lambda, node.temp, node.md_temp, &tm2_eps_real_arr_local[iglobal], &tm2_eps_imag_arr_local[iglobal], node.dens);
-    double k_tmp = sqrt((-tm2_eps_real_arr_local[iglobal] + sqrt(tm2_eps_real_arr_local[iglobal]*tm2_eps_real_arr_local[iglobal] + tm2_eps_imag_arr_local[iglobal]*tm2_eps_imag_arr_local[iglobal])) / 2);
-    tm2_alpha_arr_local[iglobal] = 4 * M_PI * k_tmp / lambda;
-    tm2_active_cell_local[iglobal]=1;
+#endif // TTT
+#endif // TFM
   }
   
   //MPI_Reduce(&tm2_alpha_arr_local[0], &tm2_alpha_arr_global[0],
@@ -171,7 +199,27 @@ int do_tm2(real dt)
 
   // Get reflectivity at room temperature and ambient density
   double eps_real_tmp, eps_imag_tmp;
+
+#ifdef MATERIALAC
+  float Z_tmp = MeanCharge(0.025851*11604.5, 2475, atomic_charge, atomic_weight[0], i, 1, 1);
+  float ne_tmp = Z_tmp * 2475 / (atomic_weight[0] * AMU);
+#else
+  float Z_tmp = MeanCharge(0.025851*11604.5, 2475, atomic_charge, atomic_weight, i, 1, 1);
+  float ne_tmp = Z_tmp * 2475 / (atomic_weight * AMU);
+#endif // MATERIALAC
+
+#ifdef TFM
+  tm2_get_epsilon(lambda, 0.025851, 0.025851, Z_tmp, ne_tmp, &eps_real_tmp, &eps_imag_tmp);
+#else
+#ifdef TTT
+#ifdef MATERIALCU
   tm2_get_epsilon(lambda, 0.025851, 0.025851, &eps_real_tmp, &eps_imag_tmp, 8628); // TODO: Density should be determined automatically
+#else // MATERIALAL
+  tm2_get_epsilon(lambda, 0.025851, 0.025851, &eps_real_tmp, &eps_imag_tmp, 2475); // TODO: Density should be determined automatically
+#endif // MATERIALCU
+#endif // TTT
+#endif // TFM
+  
   double n_tmp = sqrt((eps_real_tmp + sqrt(eps_real_tmp*eps_real_tmp + eps_imag_tmp*eps_imag_tmp)) / 2);
   double k_tmp = sqrt((-eps_real_tmp + sqrt(eps_real_tmp*eps_real_tmp + eps_imag_tmp*eps_imag_tmp)) / 2);
   double R_RT = ((n_tmp-1) * (n_tmp-1) + k_tmp*k_tmp) / ((n_tmp+1)*(n_tmp+1) + k_tmp*k_tmp);
@@ -227,6 +275,184 @@ int do_tm2(real dt)
   return 0;
 }
 
+
+int tm2_get_epsilon_TFM(double lambda, double Te,double Ti, double Z, double Ne, real* re, real* img)
+{
+        Te*=11604.52500617; //ev->K
+        Ti*=11604.52500617; //ev->K
+
+        double complex un = 1;
+        double complex im = I;
+
+        double omega_las = (2.0 * M_PI * LIGHTSPEED / lambda);  // [1/s]
+        double Ncr = ne_cr(omega_las);                  // [1/m3]
+        double Ni = Ne / Z;                             // [1/m3]
+        double EF = fermi_E(Ne);                        // [J]    
+        double TF = 2.0 * EF / (3.0 * BOLTZMAN);        // [K] 
+        double VF = sqrt(2 * EF / EMASS);               // [m/s] 
+        double A1p=4.41;
+        double A2p=0.8;
+        double A3p=0.7;
+        double A4p=0.2;
+
+
+
+        int il, ir, id;
+
+        for(id=0; lambda*1e6 > eps_bb_data[id][0]; id++){ // lambda [m]->[mu m]                 
+                il = id;
+                ir = id +1;
+        }
+        double nu_met=0;
+
+        nu_met = numet(A1p, A2p, Te, Ti, TF);
+        double nu_max=0;
+        nu_max= numax(A3p, VF, Te, Ni);
+        //if(isnan(nu_max)!=0)
+        //  error("nu_max is NaN (getEps)");
+        double nu_pl=0;
+        nu_pl = nupl(omega_las, Z, Ni, Ne, Te);
+        //if(isnan(nu_pl)!=0)
+        //  error("nu_pl is NaN (getEps)");
+
+        double ksi=0;
+        ksi = 0.75 * sqrt(M_PI) * nu_pl / omega_las;
+
+
+        double complex epsilon_bb = epsl_bb(il) + (epsl_bb(ir) - epsl_bb(il))/ (eps_bb_data[ir][0] - eps_bb_data[il][0])* (lambda*1e6 - eps_bb_data[il][0]);
+        
+#ifdef MATERIALAC
+        int phase=((int) EOS_phase_from_r_ti(Ni*atomic_weight[0]*AMU,Ti));
+#else
+        int phase=((int) EOS_phase_from_r_ti(Ni*atomic_weight*AMU,Ti));
+#endif // MATERIALAC
+
+        if( fabs(phase)==3 || fabs(phase)==4 || fabs(phase)==5)
+          epsilon_bb=0*I*0;
+
+
+        double complex epsilon_met = epsilon_bb + un - Ne / Ncr / (un + im * MIN(nu_met, nu_max) / omega_las);
+        double complex epsilon_pl  = un - Ne / Ncr * (tm2_K1(ksi) - im * nu_pl / omega_las * tm2_K2(ksi));
+        double complex epsilon_wr = epsilon_pl + (epsilon_met - epsilon_pl) * exp(-A4p * Te / TF);
+
+       *re=creal(epsilon_wr);
+       *img=cimag(epsilon_wr);
+
+//TESTCASE      
+//Drude-Lorentz static
+/*       
+real epsinf=2.73;
+real omega2= 2.2955e+16*2.2955e+16; //omega_plasma^2
+real w2=omega_laser*omega_laser;
+real gammap=1.1174e+15;
+real omegap_L=7.6595e+15;
+real omega0_L=2.4024e+15;
+real gamma_L=4.5199e+14;
+*/
+
+//Drude-Lorentz dynamic, interpol
+/*       
+real epsinf=l1[i][j][1].DL[0];
+real omega2=l1[i][j][1].DL[5]*l1[i][j][1].DL[5];
+real w2=omega_laser*omega_laser;
+real gammap=l1[i][j][1].DL[1];
+real omegap_L=l1[i][j][1].DL[2];
+real omega0_L=l1[i][j][1].DL[3];
+real gamma_L=l1[i][j][1].DL[4];
+
+double complex eps_dl= epsinf-omega2/(w2+I*gammap*omega_laser) + omegap_L*omegap_L/(omega0_L*omega0_L-w2-I*gamma_L*omega_laser);
+
+*re= creal(eps_dl);
+*img=cimag(eps_dl);   
+*/
+        return 1;
+}
+
+double complex epsl_bb(int bi){
+        return eps_bb_data[bi][1] + I* eps_bb_data[bi][2];
+}
+
+
+#ifdef TTT
+#ifdef MATERIALAL
+int tm2_get_epsilon_Al(double lambda, double Te, double Ti, real* re, real* img, real rho)
+{
+  double E_Fermi = 11.1;  // in eV
+
+  double eta = 0.75;
+  double a0 = 0.49188e15;   // in 1/s
+  double a1 = 1.2;
+  double a2 = 0.8;
+  double p1 = 0.75;
+  double p2 = 2.25;
+
+  double omega_rt_sol = 1.167022e14; // in 1/s
+  double eta_sol = 0.5175;
+
+  double omega_si_liq = 1.09084e15; // in 1/s
+  double eta_liq = 0.4025;
+
+  double omega_D = 16.4868e15;  // in 1/s
+
+  double A_1 = 2.17020801;
+  double A_2 = 3.95505075;
+  double Omega_1 = 2.25028e15;  // in 1/s
+  double Omega_2 = 2.26699e15;  // in 1/s
+  double Gamma_1 = 0.268726e15; // in 1/s
+  double Gamma_2 = 1.16111e15;  // in 1/s
+  double phi_1 = -0.52279535;
+  double phi_2 = 0.12358051;
+
+  double x_rt = 0.991638025594; // 2.71213 / 2.735
+  double x_m = 0.895795246801; // 2.45 / 2.735;
+
+  double T_rt = 0.0258520402; // Room temperature in eV
+  double T_m = 0.080439465748; // 933.5 / 11605 // Careful, this technically depends on the potential
+
+  double x = 1; // TODO: rho / 2475;  // rho / rho_0 with rho_0 = 2475 kg/m^3
+  double t = 6 * Te / (pow(x, 2/3) * E_Fermi);
+
+  double omega_se = eta * pow(x, 2/3) * a0 * pow(t, 2) * (1 + a1 * pow(t, p1)) / (1 + a2 * pow(t, p2));
+
+  // Determine whether material is solid or not via phase boundary lines
+  int solid_bool = 1; // 1: Solid, 0: liquid // TODO: Proper evaluation of the state
+
+  double omega_si;
+  if (solid_bool == 1)
+  {
+    double y_bar_x = calc_y_bar(x);
+    double y_bar_x_rt = calc_y_bar(x_rt);
+
+    omega_si = omega_rt_sol * (1 + eta_sol * pow(x_rt, 2/3) * y_bar_x_rt * Ti / (pow(x, 2/3) * y_bar_x * T_rt));
+  }
+  else  // liquid
+  {
+    double beta = calc_beta(Ti);
+    double w_Ti = calc_w(Ti);
+    double w_Tm = calc_w(T_m);
+
+    omega_si = eta_liq * omega_si_liq * pow(x, 2/3) * pow(x_m, beta) * w_Ti / (pow(x_m, 2/3) * pow(x, beta) * w_Tm);
+  }
+
+  double omega_eff = omega_se + omega_si;
+  double omega = 2 * M_PI * LIGHTSPEED / lambda;  // in 1/s
+
+  double complex im = I;
+
+  double complex epsilon_Drude = 1 - x * omega_D * omega_D / (omega * omega + I * omega * omega_eff);
+  double complex epsilon_DCP_1 = x * A_1 * Omega_1 * (exp(I * phi_1) / (Omega_1 - omega - I*Gamma_1)
+                                                    + exp(-I * phi_1) / (Omega_1 + omega + I * Gamma_1));
+  double complex epsilon_DCP_2 = x * A_2 * Omega_2 * (exp(I * phi_2) / (Omega_2 - omega - I*Gamma_2)
+                                                    + exp(-I * phi_2) / (Omega_2 + omega + I * Gamma_2));
+
+  double complex epsilon_tot = epsilon_Drude; // + epsilon_DCP_1 + epsilon_DCP_2;       // TODO: Add DCP
+
+  *re = creal(epsilon_tot);
+  *img = cimag(epsilon_tot);
+
+  return 1;
+}
+#endif // MATERIALAL
 
 #ifdef MATERIALCU
 int tm2_get_epsilon_Cu(double lambda, double Te, double Ti, real* re, real* img, real rho)
@@ -322,3 +548,112 @@ int tm2_get_epsilon_Cu(double lambda, double Te, double Ti, real* re, real* img,
   return 1;
 }
 #endif // MATERIALCU
+#endif // TTT
+
+
+#ifdef TFM
+int tm2_read_arr(char* infilename,double ***arr,int cols,int *rowsout)
+{
+
+  FILE* infile;
+  int i,j,ch;
+
+  //first count lines
+  if(myid==0)
+  {
+    infile = fopen(infilename, "r");
+    if(infile==NULL)
+      error_str("Cannot open file:%s\n", infilename);
+    do
+    {
+       ch = fgetc(infile);
+       if(ch == '\n')
+         ++(*rowsout);
+    } while (ch != EOF);
+    rewind(infile);
+  }
+  MPI_Bcast(rowsout,1,MPI_INT,0,MPI_COMM_WORLD);
+
+  //reallocate memory
+  double *buf;     //1D-buffer for 2D-array
+  //MPI_Alloc_mem((*rowsout)*2*sizeof(double), MPI_INFO_NULL, &buf);
+  //MPI_Alloc_mem((*rowsout)*sizeof(**arr), MPI_INFO_NULL,arr);
+  *arr = malloc(sizeof(**arr) * (*rowsout));
+  buf= malloc(sizeof(double)*cols*(*rowsout));
+
+  for (i = 0; i < (*rowsout); i++)
+    //MPI_Alloc_mem(2*sizeof(***arr),MPI_INFO_NULL,(*arr)[i]);
+    (*arr)[i] = malloc(sizeof ***arr * cols);
+  // Now read
+  if(myid==0)
+  {
+    for(i=0;i<(*rowsout);i++)
+    {
+      for(j=0;j<cols;j++)
+      {
+        fscanf(infile,"%lf",&(*arr)[i][j]);
+        buf[i*cols+j]=(*arr)[i][j];
+      }
+    }
+    fclose(infile);
+  }
+  MPI_Bcast(buf,(*rowsout)*cols,MPI_DOUBLE,0,MPI_COMM_WORLD);
+  //now reconstruct arr from buf
+  for(i=0;i<(*rowsout);i++)
+  {
+    for(j=0;j<cols;j++)
+    {
+      (*arr)[i][j]=buf[i*cols+j];
+    }
+  }
+  //MPI_Free_mem(buf);
+  //for (i = 0; i < *rowsout; ++i)
+  //    free((*arr)[i]);
+  //free(*arr);
+  free(buf);
+  return 0;
+}
+
+
+/**************************************
+*
+* Gain semi empirical parameters
+* K1 and K2 from table K12 and
+* generate indicee il and ir
+*
+***************************************/
+double tm2_K1(double nu) {
+        double tmp;
+        int i=0;
+
+        if(nu < 1.0 / 30.0)
+        return 1;
+        else if (nu < 50) {
+
+                i = (int) nu * 30 - 1;
+                if(i<0) i =0;
+                if(i > 1498) i = 1498;
+                tmp=K12[i][0] + (30 * nu - i - 1) * (K12[i+1][0] - K12[i][0]);
+        } else{
+                tmp=315.0 / 8.0 / (nu * nu)  - 675675.0 / 64.0 / (nu * nu * nu * nu);
+        }
+
+        return tmp;
+}
+double tm2_K2(double nu) {
+        double tmp;
+        int i=0;
+
+        if(nu < 1.0 / 30.0)
+        return 1;
+        else if (nu < 50) {
+                i = (int) nu * 30 - 1;
+                if(i<0) i=0;
+                if(i > 1498) i = 1498;
+                tmp=K12[i][1] + (30 * nu - i - 1) * (K12[i+1][1] - K12[i][1]);
+        } else{
+                tmp= 6.0 / (nu * nu)  - 720.0 / (nu * nu * nu * nu);
+        }
+        return tmp;
+}
+#endif // TFM

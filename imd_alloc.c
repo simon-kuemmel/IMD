@@ -649,7 +649,13 @@ void alloc_cell(cell *p, int n)
 
 //MYMOD
 #ifdef TTM
+#ifdef MATERIALAC
+  memalloc( &p->numneighs_al, n,sizeof(integer), al, ncopy, 1, "numneighs_al" );
+  memalloc( &p->numneighs_cu, n,sizeof(integer), al, ncopy, 1, "numneighs_cu" );
+#else
   memalloc( &p->numneighs, n,sizeof(integer), al, ncopy, 1, "numneighs" );
+#endif // MATERIALAC
+  
   memalloc( &p->fdi,n,sizeof(integer),al,ncopy,1,"fdi"); //global fd-cell indices for advection step
   memalloc( &p->fdj,n,sizeof(integer),al,ncopy,1,"fdj");
   memalloc( &p->fdk,n,sizeof(integer),al,ncopy,1,"fdk");

@@ -221,7 +221,12 @@ typedef struct {
 #endif
 //MYMOD
 #ifdef TTM
+#ifdef MATERIALAC
+  integer     *numneighs_al;
+  integer     *numneighs_cu;
+#else
   integer     *numneighs;
+#endif // MATERIALAC
 #endif
 #ifdef LOP
   real        *lopi; // Local order parameter

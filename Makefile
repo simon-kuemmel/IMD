@@ -509,6 +509,12 @@ PP_FLAGS += -DLOP
 endif
 
 
+# Al-Cu parametrization
+ifneq (,$(strip $(findstring materialac,${MAKETARGET})))
+PP_FLAGS += -DMATERIALAC
+endif
+
+
 # BALLISTIC
 ifneq (,$(strip $(findstring ballistic,${MAKETARGET})))
 PP_FLAGS += -DBALLISTIC

@@ -38,7 +38,7 @@
 #define ADVMODE 1  // 0=NO ADVECTION, 1=DISCRETE FLUX SOLVER (PREDICT ATOMIC FLUXES)
 //#define ADVMODE2d  // FALLS y dim offen sein soll, müssen atomic-fluxes auch über kanten kommmuniziert werden
 
-//#define VLATTICE   //VIRTUAL LATTICE HINTER DER PROBE. ACHTUNG: NUR 1D !!!!
+#define VLATTICE   //VIRTUAL LATTICE HINTER DER PROBE. ACHTUNG: NUR 1D !!!!
                     //Falls gewünscht kann mit vlatbuffer die zahl
                     //der zellen (vom ende der probe gezählt) angegeben werden, die NICHT im TTM berücksichtigt
                     //werden soll, da diese als Puffer dienen 
@@ -67,16 +67,6 @@
 
 #define RHOMIN       30 // NOTE: This might be too small but should be fine. 
                         // No extrapolation needed if this value is the same as the lowest density in the files
-                        
-#ifdef BALLISTIC
-#if defined(MATERIALAL)
-#define do_BALLISTIC do_BALLISTIC_AL
-#elif defined(MATERIALCU)
-#define do_BALLISTIC do_BALLISTIC_CU
-#else // Not MATERIALAL or MATERIALCU
-#define do_BALLISTIC do_BALLISTIC_TFM
-#endif // // Not MATERIALAL or MATERIALCU
-#endif // BALLISTIC
 
 #ifdef TFM
 #define getGamma getGamma_TFM
@@ -185,7 +175,12 @@ void calc_ttm()
     {
           if(node.natoms >= fd_min_atoms && node.dens >= RHOMIN)
           {
-            node.U =EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * atomic_weight * AMU * J2eV; //eV/Atom      
+#ifdef MATERIALAC
+            node.U =EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * atomic_weight[0] * AMU * J2eV; //eV/Atom
+#else
+            node.U =EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * atomic_weight * AMU * J2eV; //eV/Atom
+#endif // MATERIALAC
+
             node2.U=node.U;
             tot_elec_energy_local += node.U*((double) node.natoms);
           }      
@@ -226,8 +221,18 @@ void update_fd()
   cellptr p;
 
   //buffer arrays für allreduce
+#ifdef MATERIALAC
+  int * natomslocal_Al; //, *natomsglobal; // nach globals verschoben, soll erhalten bleiben für ballistic transüprt
+  int * natomslocal_Cu;
+#else
   int * natomslocal; //, *natomsglobal; // nach globals verschoben, soll erhalten bleiben für ballistic transüprt
+#endif // MATERIALAC
+  
+#ifdef MATERIALAC
+  int *totneighslocal_al, *totneighslocal_cu, *totneighsglobal_al, *totneighsglobal_cu;
+#else
   int * totneighslocal, *totneighsglobal;
+#endif // MATERIALAC
 
   //Folgende arrays zu globalen vars gemacht, da
   //imd integrate sie braucht
@@ -248,11 +253,24 @@ void update_fd()
 
   double * mdtemplocal,*mdtempglobal;
 
+#ifdef MATERIALAC
+  alloc1darr(int, natomslocal_Al, global_fd_dim.x); 
+  alloc1darr(int, natomslocal_Cu, global_fd_dim.x); 
+#else
   alloc1darr(int, natomslocal, global_fd_dim.x); 
+#endif // MATERIALAC
+
   //alloc1darr(int, natomsglobal, global_fd_dim.x);//nach init verschoben
 
+#ifdef MATERIALAC
+  alloc1darr(int, totneighslocal_al, global_fd_dim.x);
+  alloc1darr(int, totneighslocal_cu, global_fd_dim.x);
+  alloc1darr(int, totneighsglobal_al, global_fd_dim.x);
+  alloc1darr(int, totneighsglobal_cu, global_fd_dim.x);
+#else
   alloc1darr(int, totneighslocal, global_fd_dim.x);
   alloc1darr(int, totneighsglobal, global_fd_dim.x);
+#endif // MATERIALAC
 
   //Nacht init_ttm verschoben
   // alloc1darr(double, vcomxlocal, global_fd_dim.x);
@@ -270,7 +288,12 @@ void update_fd()
   //zero buffer arrays
   for(i=0;i<global_fd_dim.x;i++)
   {
+#ifdef MATERIALAC
+    natomslocal_Al[i]=natomslocal_Cu[i]=totneighslocal_al[i]=totneighslocal_cu[i]=fluxfromleftlocal[i]=fluxfromrightlocal[i]=0;
+#else
     natomslocal[i]=totneighslocal[i]=fluxfromleftlocal[i]=fluxfromrightlocal[i]=0;
+#endif // MATERIALAC
+
     vcomxlocal[i]=vcomylocal[i]=vcomzlocal[i]=mdtemplocal[i]=0.0;
 
     xiarr_global[i]=0.0;
@@ -337,14 +360,31 @@ void update_fd()
     //   continue;
     for (l=0; l<p->n; ++l) 
     {
+#ifndef MATERIALAC
       if(SORTE(p,l) !=0 ) continue;
+#endif // MATERIALAC
       int i_global=(int) (ORT(p,l,X)/fd_h.x) ;
       i_global=MIN(i_global,global_fd_dim.x-1);
       i_global=MAX(i_global,0);
       // int i_local=i_global+1-my_coord.x*(local_fd_dim.x-2);
 
+#ifdef MATERIALAC
+      if(SORTE(p,l) == 0 ){
+        natomslocal_Al[i_global]++;
+      }
+      if(SORTE(p,l) == 1 ){
+        natomslocal_Cu[i_global]++;
+      }
+#else
       natomslocal[i_global]++;
+#endif // MATERIALAC
+
+#ifdef MATERIALAC
+      totneighslocal_al[i_global]+= NUMNEIGHS_AL(p, l);
+      totneighslocal_cu[i_global]+= NUMNEIGHS_CU(p, l);
+#else
       totneighslocal[i_global]+= NUMNEIGHS(p, l);
+#endif // MATERIALAC
 
       vcomxlocal[i_global]+=IMPULS(p,l,X);
       vcomylocal[i_global]+=IMPULS(p,l,Y);
@@ -383,12 +423,22 @@ void update_fd()
  // *************************
  //  REDUCE Buffer arrays
  // *************************
+#ifdef MATERIALAC
+ MPI_Allreduce(natomslocal_Al, natomsglobal_Al, global_fd_dim.x, MPI_INT, MPI_SUM, cpugrid);
+ MPI_Allreduce(natomslocal_Cu, natomsglobal_Cu, global_fd_dim.x, MPI_INT, MPI_SUM, cpugrid);
+#else
  MPI_Allreduce(natomslocal, natomsglobal, global_fd_dim.x, MPI_INT, MPI_SUM, cpugrid);
+#endif // MATERIALAC
 
  MPI_Allreduce(fluxfromleftlocal,  fluxfromleftglobal,  global_fd_dim.x, MPI_INT, MPI_SUM, cpugrid); 
  MPI_Allreduce(fluxfromrightlocal, fluxfromrightglobal, global_fd_dim.x, MPI_INT, MPI_SUM, cpugrid); 
 
+#ifdef MATERIALAC
+ MPI_Allreduce(totneighslocal_al, totneighsglobal_al, global_fd_dim.x, MPI_INT, MPI_SUM, cpugrid);
+ MPI_Allreduce(totneighslocal_cu, totneighsglobal_cu, global_fd_dim.x, MPI_INT, MPI_SUM, cpugrid);
+#else
  MPI_Allreduce(totneighslocal, totneighsglobal, global_fd_dim.x, MPI_INT, MPI_SUM, cpugrid);
+#endif // MATERIALAC
 
  MPI_Allreduce(vcomxlocal, vcomxglobal, global_fd_dim.x, MPI_DOUBLE, MPI_SUM, cpugrid);
  MPI_Allreduce(vcomylocal, vcomyglobal, global_fd_dim.x, MPI_DOUBLE, MPI_SUM, cpugrid);
@@ -403,7 +453,12 @@ for(i_global=0;i_global<global_fd_dim.x;i_global++)
   // if(i_local < 0 || i_local > local_fd_dim.x-1)
   //   continue;
 
-    double totmass=(double) natomsglobal[i_global]*atomic_weight;
+#ifdef MATERIALAC  
+    double totmass = (double)natomsglobal_Al[i_global]*atomic_weight[0] + (double)natomsglobal_Cu[i_global]*atomic_weight[1];
+#else
+    double totmass=(double)natomsglobal[i_global]*atomic_weight;
+#endif // MATERIALAC
+  
     if(totmass>0)
     {
       vcomxglobal[i_global] /= totmass;
@@ -463,16 +518,30 @@ for(i_global=0; i_global < global_fd_dim.x;i_global++)
 
     i=i_local;
 
+#ifdef MATERIALAC
+    node.natoms = natomsglobal_Al[i_global] + natomsglobal_Cu[i_global];
+#else
     node.natoms=natomsglobal[i_global];
+#endif // MATERIALAC
+  
     node2.natoms=node.natoms;
     // node.flux[0]=node2.flux[0]=fluxfromrightglobal[i];
     // node.flux[1]=node2.flux[1]=fluxfromleftglobal[i];
 
     if(node.natoms > 0)
     {
-      node.dens=((double) totneighsglobal[i_global])/((double) node.natoms) * atomic_weight / neighvol * 1660.53907; //kg/m^3       
+#ifdef MATERIALAC
+      node.dens=((double)totneighsglobal_al[i_global]*atomic_weight[0] + (double)totneighsglobal_cu[i_global]*atomic_weight[1]) / (((double) node.natoms) * neighvol) * 1660.53907; //kg/m^3
+#else
+      node.dens=((double) totneighsglobal[i_global])/((double) node.natoms) * atomic_weight / neighvol * 1660.53907; //kg/m^3  
+#endif // MATERIALAC
+      
       if(node.dens==0)
-        node.dens=(double) node.natoms * atomic_weight / fd_vol * 1660.53907;    
+#ifdef MATERIALAC
+        node.dens=(double) node.natoms * atomic_weight[0] / fd_vol * 1660.53907;
+#else
+        node.dens=(double) node.natoms * atomic_weight / fd_vol * 1660.53907;
+#endif // MATERIALAC
 
       node.md_temp=mdtempglobal[i_global];
       node.md_temp /= (3.0 * (double) node.natoms);
@@ -505,20 +574,40 @@ for(i_global=0; i_global < global_fd_dim.x;i_global++)
     ///////////
     if(i_local==1)
     {
+#ifdef MATERIALAC
+      l1[0].natoms = natomsglobal_Al[i_global-1] + natomsglobal_Cu[i_global-1];
+#else
       l1[0].natoms=natomsglobal[i_global-1];
-      if(l1[0].natoms > 0 )
-        l1[0].dens=((double) totneighsglobal[i_global-1])/((double) l1[0].natoms) * atomic_weight / neighvol * 1660.53907; //kg/m^3       
+#endif // MATERIALAC
+
+      if(l1[0].natoms > 0 ){
+#ifdef MATERIALAC
+        l1[0].dens=((double)totneighsglobal_al[i_global-1]*atomic_weight[0] + (double)totneighsglobal_cu[i_global-1]*atomic_weight[1]) / (((double) l1[0].natoms) * neighvol) * 1660.53907; //kg/m^3
+#else
+        l1[0].dens=((double) totneighsglobal[i_global-1])/((double) l1[0].natoms) * atomic_weight / neighvol * 1660.53907; //kg/m^3
+#endif // MATERIALAC        
+      }
 
       l2[0].natoms=l1[0].natoms;
       l2[0].dens=l1[0].dens;
     }
     else if (i_local==local_fd_dim.x-2)
     {
-      l1[local_fd_dim.x-1].natoms=natomsglobal[i_global+1];
+#ifdef MATERIALAC
+       l1[local_fd_dim.x-1].natoms = natomsglobal_Al[i_global+1] + natomsglobal_Cu[i_global+1];
+#else
+       l1[local_fd_dim.x-1].natoms=natomsglobal[i_global+1];
+#endif // MATERIALAC
 
-      if(l1[local_fd_dim.x-1].natoms > 0 )
+      if(l1[local_fd_dim.x-1].natoms > 0 ){
+#ifdef MATERIALAC
+        l1[local_fd_dim.x-1].dens=((double)totneighsglobal_al[i_global+1]*atomic_weight[0] + (double)totneighsglobal_cu[i_global+1]*atomic_weight[1]) / 
+                                    (((double) l1[local_fd_dim.x-1].natoms) * neighvol) * 1660.53907; //kg/m^3
+#else
         l1[local_fd_dim.x-1].dens=((double) totneighsglobal[i_global+1])/((double) l1[local_fd_dim.x-1].natoms) *
-                                    atomic_weight / neighvol * 1660.53907; //kg/m^3  
+                                    atomic_weight / neighvol * 1660.53907; //kg/m^3
+#endif // MATERIALAC
+      }
 
       l2[local_fd_dim.x-1].natoms=l1[local_fd_dim.x-1].natoms;
       l2[local_fd_dim.x-1].dens  =l1[local_fd_dim.x-1].dens;
@@ -526,11 +615,25 @@ for(i_global=0; i_global < global_fd_dim.x;i_global++)
     }
   }
 
-
+#ifdef MATERIALAC
+  free1darr(natomslocal_Al);
+  free1darr(natomslocal_Cu);
+#else
   free1darr(natomslocal);
+#endif // MATERIALAC
+  
   // free1darr(natomsglobal);
+  
+#ifdef MATERIALAC
+  free1darr(totneighslocal_al);
+  free1darr(totneighslocal_cu);
+  free1darr(totneighsglobal_al);
+  free1darr(totneighsglobal_cu);
+#else
   free1darr(totneighslocal);
   free1darr(totneighsglobal);
+#endif // MATERIALAC
+  
   // free1darr(vcomxlocal);
   // free1darr(vcomxglobal);
   // free1darr(vcomylocal);
@@ -718,8 +821,13 @@ if(i_global > last_active_cell_global)
           //           IONISATIONSGRAD UND ELEK.DICHTE
           ////////////////////////////////////////////////////////////// 
 #ifdef TFM
-#ifndef COLRAD          
+#ifndef COLRAD
+#ifdef MATERIALAC
+          node.Z=MeanCharge(node.temp*11604.5, node.dens, atomic_charge, atomic_weight[0],i,j,k);
+#else
           node.Z=MeanCharge(node.temp*11604.5, node.dens, atomic_charge, atomic_weight,i,j,k);
+#endif // MATERIALAC
+          
           // node.Z=QfromT(node.temp,node.dens); //Möglichkeit zur Interpolation aus Tabelle, falls More-Fit ungenügend
 #if DEBUG_LEVEL > 0
           if (node.Z == -1.0)
@@ -729,7 +837,13 @@ if(i_global > last_active_cell_global)
             error("ERROR during QfromT in FILLMESH");
           }
 #endif
+
+#ifdef MATERIALAC
+          node.ne = node.Z * node.dens / (atomic_weight[0] * AMU);
+#else
           node.ne = node.Z * node.dens / (atomic_weight * AMU);
+#endif // MATERIALAC
+
 #endif
 #endif /* TFM*/
 
@@ -826,12 +940,24 @@ if(i_global > last_active_cell_global)
           if (node.natoms >= fd_min_atoms && node.dens > RHOMIN)
           {        
 #if EOSMODE==1               
+            
+#ifdef MATERIALAC
+             node.U =EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * atomic_weight[0] * AMU * J2eV; // eV/Atom
+#else
              node.U =EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * atomic_weight * AMU * J2eV; // eV/Atom
+#endif // MATERIALAC
+
              node2.U=node.U;
 
              //PLAUSIBILITY EOS CHECK:
+#ifdef MATERIALAC
+             double echeck= EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * atomic_weight[0] * AMU * J2eV;
+             double tcheck = EOS_te_from_r_ee(node.dens, echeck/atomic_weight[0]/AMU * eV2J) / 11604.5;
+#else
              double echeck= EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * atomic_weight * AMU * J2eV;
              double tcheck = EOS_te_from_r_ee(node.dens, echeck/atomic_weight/AMU * eV2J) / 11604.5;
+#endif // MATERIALAC
+             
              double tinit=node.temp;
 
              if(ABS(tcheck -tinit) > tinit*0.01) // 1% unterschied
@@ -843,13 +969,23 @@ if(i_global > last_active_cell_global)
                error(errstr);
              }
 #else          
-//ACHTUNG: gsl_fermi_integral schwankt extrem  
-            node.U =FEG_ee_from_r_ne_te(node.dens, node.ne, node.temp * 11604.5) * atomic_weight * AMU * J2eV; // eV/Atom
-            node2.U=node.U;
+//ACHTUNG: gsl_fermi_integral schwankt extrem
+#ifdef MATERIALAC
+             node.U =FEG_ee_from_r_ne_te(node.dens, node.ne, node.temp * 11604.5) * atomic_weight[0] * AMU * J2eV; // eV/Atom
+             node2.U=node.U;
+
+             //PLAUSIBILITY EOS CHECK:
+             double echeck= FEG_ee_from_r_ne_te(node.dens, node.ne, node.temp * 11604.5) * atomic_weight[0] * AMU * J2eV;
+             double tcheck = FEG_te_from_r_ne_ee(node.dens, node.ne, echeck/atomic_weight[0]/AMU * eV2J) / 11604.5;
+#else
+             node.U =FEG_ee_from_r_ne_te(node.dens, node.ne, node.temp * 11604.5) * atomic_weight * AMU * J2eV; // eV/Atom
+             node2.U=node.U;
 
              //PLAUSIBILITY EOS CHECK:
              double echeck= FEG_ee_from_r_ne_te(node.dens, node.ne, node.temp * 11604.5) * atomic_weight * AMU * J2eV;
              double tcheck = FEG_te_from_r_ne_ee(node.dens, node.ne, echeck/atomic_weight/AMU * eV2J) / 11604.5;
+#endif // MATERIALAC
+
              double tinit=node.temp;
 
              if(ABS(tcheck -tinit) > tinit*0.15) // 5% unterschied
@@ -887,8 +1023,14 @@ if(i_global > last_active_cell_global)
           for(i=0;i<vlatdim;i++)
           {
 #ifdef TFM
+#ifdef MATERIALAC
+            vlattice1[i].Z= MeanCharge(vlattice1[i].temp*11604.5, vlattice1[i].dens, atomic_charge, atomic_weight[0],i,1,1);
+            vlattice1[i].ne= vlattice1[i].Z * vlattice1[i].dens / (atomic_weight[0] * AMU);
+#else
             vlattice1[i].Z= MeanCharge(vlattice1[i].temp*11604.5, vlattice1[i].dens, atomic_charge, atomic_weight,i,1,1);
             vlattice1[i].ne= vlattice1[i].Z * vlattice1[i].dens / (atomic_weight * AMU);
+#endif // MATERIALAC
+            
             vlattice1[i].fd_k = getKappa(vlattice1[i].temp, vlattice1[i].md_temp, vlattice1[i].ne, vlattice1[i].Z); 
 #endif
 #ifdef TTT
@@ -1089,7 +1231,12 @@ void init_ttm()
   alloc1darr(int, fluxfromrightglobal, global_fd_dim.x);
   alloc1darr(int, fluxfromleftglobal, global_fd_dim.x);
 
-  alloc1darr(int, natomsglobal, global_fd_dim.x);  
+#ifdef MATERIALAC
+  alloc1darr(int, natomsglobal_Al, global_fd_dim.x);
+  alloc1darr(int, natomsglobal_Cu, global_fd_dim.x);
+#else
+  alloc1darr(int, natomsglobal, global_fd_dim.x);
+#endif // MATERIALAC
 
 #ifdef ELECPRESS
   alloc1darr(double, epress_local,  global_fd_dim.x);
@@ -1369,6 +1516,16 @@ void do_ADV(double tau)
           //Temp updaten wenn zelle aktiviert
           if(node.natoms >= fd_min_atoms && node.dens > RHOMIN)
           {
+#ifdef MATERIALAC
+#if EOSMODE==1            
+            node2.temp = EOS_te_from_r_ee(node.dens, node2.U / (atomic_weight[0] * AMU * J2eV)) / 11604.5;
+#else
+            node.Z=MeanCharge(node.temp*11604.5, node.dens, atomic_charge, atomic_weight[0],i,j,k);
+            node.ne = node.Z * node.dens / (atomic_weight[0] * AMU); //Assumption: Quasi-neutrality condition
+            node2.ne = node.ne;            
+            node2.temp=  FEG_te_from_r_ne_ee(node.dens,node.ne, node2.U / (atomic_weight[0] * AMU * J2eV)) / 11604.5;
+#endif
+#else
 #if EOSMODE==1            
             node2.temp = EOS_te_from_r_ee(node.dens, node2.U / (atomic_weight * AMU * J2eV)) / 11604.5;
 #else
@@ -1376,7 +1533,9 @@ void do_ADV(double tau)
             node.ne = node.Z * node.dens / (atomic_weight * AMU); //Assumption: Quasi-neutrality condition
             node2.ne = node.ne;            
             node2.temp=  FEG_te_from_r_ne_ee(node.dens,node.ne, node2.U / (atomic_weight * AMU * J2eV)) / 11604.5;
-#endif     
+#endif
+#endif // MATERIALAC
+
 
           }     
       }
@@ -1507,11 +1666,20 @@ if(i_global > last_active_cell_global)
         } //isnan ....
         //Interne Energie muss noch geupdatet werden (Falls fallback auf altes Schema)
 
-#if EOSMODE==1            
+#ifdef MATERIALAC
+#if EOSMODE==1      
+        node.U = node2.U= EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * atomic_weight[0] * AMU * J2eV; // eV/Atom
+#else
+        node.U=node2.U=FEG_ee_from_r_ne_te(node.dens,node.ne,node.temp*11604.5) * atomic_weight[0] * AMU * J2eV; // eV/Atom
+#endif
+#else
+#if EOSMODE==1      
         node.U = node2.U= EOS_ee_from_r_te(node.dens, node.temp * 11604.5) * atomic_weight * AMU * J2eV; // eV/Atom
 #else
         node.U=node2.U=FEG_ee_from_r_ne_te(node.dens,node.ne,node.temp*11604.5) * atomic_weight * AMU * J2eV; // eV/Atom
 #endif
+#endif // MATERIALAC
+
       } // endif isnan(temp) || temp<=0
 
     } // endif ..new cell activated...
@@ -1520,61 +1688,21 @@ if(i_global > last_active_cell_global)
   } //for i
 }
 
-
 #ifdef BALLISTIC
-void do_BALLISTIC_TFM(double tau) // NUR ZUM TESTEN:ballistic transport und delayed thermalization
-{
-  int i;
-  double tau_relax=50e-15; //in sec
-  //if(steps*timestep*10.18*1e-15 > laser_t_0+3*tau_relax)
-  if(tmm_time > laser_t_0+3*tau_relax)
-    return; //Thermalization complete
-
-  if(myid==0)
-  {
-    int xmax,xmin;
-    //5th loop for ballistic transport: Annahme delta_t << delta_t_Ballistic = delta x/v_F ~ 1 fs
-    double tau_b=tau*10.18*1e-15; //sec.
-    double vF=1.5e6; //fermi vel in m/s
-    double alpha=tau_b*vF/(fd_h.x*1e-10);
-
-    for(i=2;i<global_fd_dim.x-1-1;i++)
-    {
-      q_stored[i]+=tmm_Qabs[i];
-    }
-
-    for(i=2;i<global_fd_dim.x-1;i++) //1st order upwind
-    {
-      q_stored_adv[i]=q_stored[i]-alpha*(q_stored[i]-q_stored[i-1]);
-    }
-    for(i=1;i<global_fd_dim.x-1;i++) //new qabs from qstored
-    {
-      double dq=q_stored_adv[i]/tau_relax*tau_b;
-      q_stored_adv[i]-=dq;
-      q_stored[i]=q_stored_adv[i];
-      tmm_Qabs[i]=dq;     //overwrite with thermalized eng. only, keep stored eng. for advection
-    }
-  }
-
-  MPI_Scatter(&tmm_Qabs[0], local_fd_dim.x-2, MPI_DOUBLE, &tmm_Qabs_scat[0], local_fd_dim.x-2, MPI_DOUBLE, 0, cpugrid);
-  for(i=1;i<local_fd_dim.x-1;i++)
-  {
-    node.source=node2.source=tmm_Qabs_scat[i-1];
-  }
-}
-
-
-void do_BALLISTIC_CU(double tau)
+void do_BALLISTIC(double tau)
 {
   int i;
 
+#ifdef MATERIALCU
   // Material constants
   double E_Fermi = 9.2; // in eV
-  double valence = 1.9; // TODO: 1.0 or 1.9?
+  double valence = 1.9; // TODO: 1.0 or 1.9? // TODO: Can be obtained from valence(node.temp)
   double n_i = 0.086e30; // in 1/m^3 NOTE: Depends on the potential, here: experimental value
   double Kappa_i = 401; // in W/m/K
   double rho = 142763;  // in mol/m^3 NOTE: Depends on the potential, here: experimental value
   double Cv = 23.74;  // in J/mol/K NOTE: Depends on the potential, here: experimental value
+  
+  double v_Fermi = sqrt(2*E_Fermi*ECHARGE / EMASS);  // in m/s
 
   // Calculate tau_0
   double omega_pl = sqrt(valence * n_i * ECHARGE * ECHARGE / (EMASS * ECONST));
@@ -1587,7 +1715,17 @@ void do_BALLISTIC_CU(double tau)
 
   // Calculate L_opt
   double eps_real_tmp, eps_imag_tmp;
+
+#ifdef TMM
   tmm_get_epsilon_Cu(lambda, 0.025851, 0.025851, &eps_real_tmp, &eps_imag_tmp, 8628);
+#else
+#ifdef TM2
+  tm2_get_epsilon_Cu(lambda, 0.025851, 0.025851, &eps_real_tmp, &eps_imag_tmp, 8628);
+#else
+  error("You have to specify TMM or TM2");
+#endif // TM2
+#endif // TMM
+
   double frequency = 2 * M_PI * c0 / lambda;
   double n_tmp = sqrt((eps_real_tmp + sqrt(eps_real_tmp*eps_real_tmp + eps_imag_tmp*eps_imag_tmp)) / 2);
   double k_tmp = sqrt((- eps_real_tmp + sqrt(eps_real_tmp*eps_real_tmp + eps_imag_tmp*eps_imag_tmp )) / 2);
@@ -1599,15 +1737,26 @@ void do_BALLISTIC_CU(double tau)
   double Delta_E = (1-R_RT) * fluence / ((L_diff + L_opt) * valence * n_i); // in J
   Delta_E *= J2eV;
   double tau_relax = tau_0 * E_Fermi * E_Fermi / (Delta_E * Delta_E);
-  tau_relax = 9.554e-15; // TODO: Remove
+#endif // MATERIALCU
 
+#ifdef TMM
   if (myid==0 && tmm_time==0.0)
+#else
+#ifdef TM2
+  if (myid==0 && tm2_time==0.0)
+#endif // TM2
+#endif // TMM
   {
-    printf("\nDelta E: %f eV, tau_relax: %f fs\n\n", Delta_E, tau_relax*1.0e15);
+    printf("\nDelta E: %f eV, tau_relax: %f fs, lambda_ball: %f nm\n\n", Delta_E, tau_relax*1.0e15, tau_relax*1.0e-15);
   }
 
-  //if(steps*timestep*10.18*1e-15 > laser_t_0+3*tau_relax)
+#ifdef TMM
   if(tmm_time > laser_t_0+3*tau_relax)
+#else
+#ifdef TM2
+  if(tm2_time > laser_t_0+3*tau_relax)
+#endif // TM2
+#endif // TMM
     return; //Thermalization complete
 
   if(myid==0)
@@ -1620,7 +1769,13 @@ void do_BALLISTIC_CU(double tau)
 
     for(i=2;i<global_fd_dim.x-1-1;i++)
     {
+#ifdef TMM
       q_stored[i]+=tmm_Qabs[i];
+#else
+#ifdef TM2
+      q_stored[i]+=tm2_Qabs[i];
+#endif // TM2
+#endif // TMM
     }
 
     for(i=2;i<global_fd_dim.x-1;i++) //1st order upwind
@@ -1632,59 +1787,34 @@ void do_BALLISTIC_CU(double tau)
       double dq=q_stored_adv[i]/tau_relax*tau_b;
       q_stored_adv[i]-=dq;
       q_stored[i]=q_stored_adv[i];
+
+#ifdef TMM
       tmm_Qabs[i]=dq;     //overwrite with thermalized eng. only, keep stored eng. for advection
+#else
+#ifdef TM2
+      tm2_Qabs[i]=dq;     //overwrite with thermalized eng. only, keep stored eng. for advection
+#endif // TM2
+#endif // TMM
     }
   }
 
+#ifdef TMM
   MPI_Scatter(&tmm_Qabs[0], local_fd_dim.x-2, MPI_DOUBLE, &tmm_Qabs_scat[0], local_fd_dim.x-2, MPI_DOUBLE, 0, cpugrid);
   for(i=1;i<local_fd_dim.x-1;i++)
   {
     node.source=node2.source=tmm_Qabs_scat[i-1];
   }
-}
-
-
-void do_BALLISTIC_CU_(double tau)
-{
-  int i;
-  double tau_relax=55.59e-15; //in sec // TODO
-  //if(steps*timestep*10.18*1e-15 > laser_t_0+3*tau_relax)
-  if(tmm_time > laser_t_0+3*tau_relax)
-    return; //Thermalization complete
-
-  if(myid==0)
-  {
-    int xmax,xmin;
-    //5th loop for ballistic transport: Annahme delta_t << delta_t_Ballistic = delta x/v_F ~ 1 fs
-    double tau_b=tau*10.18*1e-15; //sec.
-    double vF=1.799e6; //fermi vel in m/s // TODO
-    double alpha=tau_b*vF/(fd_h.x*1e-10);
-  
-    for(i=2;i<global_fd_dim.x-1-1;i++)
-    {
-      q_stored[i]+=tmm_Qabs[i];
-    }
-
-    for(i=2;i<global_fd_dim.x-1;i++) //1st order upwind
-    {
-      q_stored_adv[i]=q_stored[i]-alpha*(q_stored[i]-q_stored[i-1]);
-    }
-    for(i=1;i<global_fd_dim.x-1;i++) //new qabs from qstored
-    {
-      double dq=q_stored_adv[i]/tau_relax*tau_b;
-      q_stored_adv[i]-=dq;
-      q_stored[i]=q_stored_adv[i];
-      tmm_Qabs[i]=dq;     //overwrite with thermalized eng. only, keep stored eng. for advection
-    }
-  }
-
-  MPI_Scatter(&tmm_Qabs[0], local_fd_dim.x-2, MPI_DOUBLE, &tmm_Qabs_scat[0], local_fd_dim.x-2, MPI_DOUBLE, 0, cpugrid);
+#else
+#ifdef TM2
+  MPI_Scatter(&tm2_Qabs[0], local_fd_dim.x-2, MPI_DOUBLE, &tm2_Qabs_scat[0], local_fd_dim.x-2, MPI_DOUBLE, 0, cpugrid);
   for(i=1;i<local_fd_dim.x-1;i++)
   {
-    node.source=node2.source=tmm_Qabs_scat[i-1];
+    node.source=node2.source=tm2_Qabs_scat[i-1];
   }
+#endif // TM2
+#endif // TMM
 }
-#endif
+#endif // BALLISTIC
 
 // ****************************************************************************************************
 // *   DO A SINGLE DIFFUSION STEP HERE
@@ -1702,8 +1832,11 @@ void do_DIFF(double tau)
   //nicht von der zahl der atome pro Zelle, muss auch xi umgeschrieben werden da sonst
   //zellen mit wenigen Atomen viel zu stark erhitzt werden!    
   //double xi_fac=fd_vol/3.0/((double) diff_substeps);///((double) node.natoms); //ORIGINAL
+#ifdef MATERIALAC
+  double xi_fac = 0.0; // Will later be calculated for each FD cell individually
+#else
   double xi_fac = atomic_weight * AMU / 3.0 * 1e30 / ((double) diff_substeps); //NEU
-
+#endif // MATERIALAC
 
   double Ce; //specific heat
   double invxsq = 1.0 / (fd_h.x * fd_h.x);
@@ -1726,6 +1859,11 @@ void do_DIFF(double tau)
   for (i = 1; i < local_fd_dim.x - 1; i++)
   {     
     i_global =  ((i - 1) + myid* (local_fd_dim.x - 2));
+    
+#ifdef MATERIALAC
+    xi_fac = ((natomsglobal_Al[i_global]*atomic_weight[0] + natomsglobal_Cu[i_global]*atomic_weight[1]) / (natomsglobal_Al[i_global] + natomsglobal_Cu[i_global])) * AMU / 3.0 * 1e30 / ((double) diff_substeps);
+#endif // MATERIALAC
+    
 #ifdef VLATTICE
 //HOTIFX      
 if(i_global > last_active_cell_global)
@@ -1827,7 +1965,11 @@ if(i_global > last_active_cell_global)
     double b_fit = b_0 + b_1*node.dens + b_2*pow(node.dens, 2) + b_3*pow(node.dens, 3) + b_4*pow(node.dens, 4) + b_5*pow(node.dens, 5) + b_6*pow(node.dens, 6);
     double c_fit = c_0 + c_1*node.dens + c_2*pow(node.dens, 2) + c_3*pow(node.dens, 3) + c_4*pow(node.dens, 4) + c_5*pow(node.dens, 5) + c_6*pow(node.dens, 6);
     
+#ifdef MATERIALAC
+    double Delta_E = (EOS_ee_from_r_te(node.dens, node.temp*11604.5) - EOS_ee_from_r_te(node2.dens, node2.temp*11604.5)) * atomic_weight[0] * AMU * J2eV; //eV/Atom
+#else
     double Delta_E = (EOS_ee_from_r_te(node.dens, node.temp*11604.5) - EOS_ee_from_r_te(node2.dens, node2.temp*11604.5)) * atomic_weight * AMU * J2eV; //eV/Atom
+#endif // MATERIALAC
     
     double A, B, C;
     
@@ -2655,7 +2797,11 @@ double getGamma_TFM(double Te, double Ti, double Ne, double Z) //POVAR
   double A2g = 20;
   double A3g = 0.25;
 
+#ifdef MATERIALAC
+  double  m_atom = atomic_weight[0]; //u
+#else
   double  m_atom = atomic_weight; //u
+#endif // MATERIALAC
 
   double Ni = Ne / Z;                                     // [1/m3]
   double EF = fermi_E(Ne);                                // [J]
@@ -2855,7 +3001,7 @@ double getKappa_Cu(double Te, double Ti, double rho, int i_global)
   double lop_thr;
 
 #ifdef NBL
-  lop_thr = 1.05;
+  lop_thr = 0.7; // TODO: 0.975 or 1.05 ???
 #else
   lop_thr = 0.7;
 #endif
@@ -2866,7 +3012,7 @@ double getKappa_Cu(double Te, double Ti, double rho, int i_global)
   else{
     lopi_local = lopi_arr_global[i_global];
 
-    if (lopi_local<0.7){
+    if (lopi_local<lop_thr){
       solid_bool = 1;
     }
     else{

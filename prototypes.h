@@ -137,15 +137,7 @@ double EOS_te_from_r_ee(double r,double e);
 
 // BALLISTIC TRANSPORT
 #ifdef BALLISTIC
-#ifdef MATERIALAL
-void do_BALLISTIC_AL(double tau);
-#endif // MATERIALAL
-#ifdef MATERIALCU
-void do_BALLISTIC_CU(double tau);
-#endif // MATERIALCU
-#else // Not MATERIALAL or MATERIALCU
-void do_BALLISTIC_TFM(double tau);
-#endif // Not MATERIALAL or MATERIALCU
+void do_BALLISTIC(double tau);
 #endif // BALLISTIC
 
 // MYMOD: Simon, 07.03.2025
@@ -172,9 +164,23 @@ double FEG_te_from_r_ne_ee(double r,double ne,double ee);
 #ifdef TM2
 int tm2_init(void);
 int do_tm2(real dt);
+#ifdef TFM
+int tm2_get_epsilon_TFM(double lambda, double Te, double Ti, double Z, double Ne, real* re, real* img);
+double complex epsl_bb(int bi);
+#endif
+#ifdef TTT
+#ifdef MATERIALAL // Al
+int tm2_get_epsilon_Al(double lambda, double Te, double Ti, real* re, real* img, double rho);
+#endif // MATERIALAL
 #ifdef MATERIALCU // Cu
 int tm2_get_epsilon_Cu(double lambda, double Te, double Ti, real* re, real* img, double rho);
 #endif // MATERIALCU
+#endif // TTT
+// END MYMOD
+//
+int tm2_read_arr(char* infilename,double ***arr,int cols,int *rowsout);
+double tm2_K2(double nu);
+double tm2_K1(double nu);
 #endif
 // END MYMOD
 
@@ -307,6 +313,7 @@ double nueff(double Te,double Ti,double ne,double ni,double ni0,double Ce,double
 
 char **strsplit(const char* str, const char* delim, size_t* numtokens);
 void ttm_read(int number);
+#endif // TTM
 
 /*************************
 * END OF MY FUNCTIONS    *

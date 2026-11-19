@@ -181,7 +181,12 @@ INLINE static int MOD(shortint p, int q)
 
 //MYMOD
 #ifdef TTM
+#ifdef MATERIALAC
+#define NUMNEIGHS_AL(cell,i)       ((cell)->numneighs_al[i])
+#define NUMNEIGHS_CU(cell,i)       ((cell)->numneighs_cu[i])
+#else
 #define NUMNEIGHS(cell,i)       ((cell)->numneighs[i])
+#endif // MATERIALAC
 #endif
 
 #ifdef LOP

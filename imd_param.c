@@ -2146,9 +2146,18 @@ else if (strcasecmp(token, "lambda")==0){
 
 #endif //FDTD LASER und TMM
 //MY MOD: WIDERANGE TTM
+#ifdef MATERIALAC
+    else if (strcasecmp(token,"atomic_weight")==0) {
+      atomic_weight = (real *) malloc( 2*sizeof(real));
+      if (NULL==atomic_weight) error("cannot allocate atomic_weight");
+      getparam(token,atomic_weight,PARAM_REAL,2,2);
+    }
+#else
     else if(strcasecmp(token,"atomic_weight")==0){
         getparam("atomic_weight",&atomic_weight,PARAM_REAL,1,1);
     }
+#endif // MATERIALAC
+    
     else if(strcasecmp(token,"atomic_charge")==0){
         getparam("atomic_charge",&atomic_charge,PARAM_REAL,1,1);
     }
@@ -4013,8 +4022,15 @@ void check_parameters_complete()
   if(fd_n_timesteps==0)
     error("You must specify fd_n_timesteps");
 #endif //FDTD und LASER und TMM
+  
+#ifdef MATERIALAC
+  if(atomic_weight[0]==0 || atomic_weight[1]==0)
+    error("You must specify atomic_weight");
+#else
   if(atomic_weight==0)
     error("You must specify atomic_weight");
+#endif // MATERIALAC
+  
   if(atomic_charge==0)
     error("You must specify atomic_charge");
 #ifdef TTM1D
@@ -4817,7 +4833,17 @@ MPI_Bcast( &filter_int,             1, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Bcast( &lambda,	      1, REAL,0, MPI_COMM_WORLD);
 #endif
 
+#ifdef MATERIALAC
+  if (NULL==atomic_weight) {
+    atomic_weight = (real *) malloc( 2 * sizeof(real) );
+    if (NULL==atomic_weight)
+      error("Cannot allocate memory for atomic_weight on client.");
+  }
+  MPI_Bcast( atomic_weight, 2, REAL, 0, MPI_COMM_WORLD);
+#else
   MPI_Bcast( &atomic_weight,  1, REAL,0, MPI_COMM_WORLD);
+#endif // MATERIALAC
+  
   MPI_Bcast( &atomic_charge,  1, REAL,0, MPI_COMM_WORLD);
 #if defined(FDTD) || defined(LASER) || defined(TMM) || defined(TM2)
 // MYMOD: Simon, 13.10.2025

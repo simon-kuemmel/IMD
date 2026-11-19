@@ -399,7 +399,13 @@ void copy_atom_cell_buf(msgbuf *to, int to_cpu, cell *p, int ind )
 #endif
 //MYMOD
 #ifdef TTM
+#ifdef MATERIALAC
+  to->data[ to->n++ ] = NUMNEIGHS_AL(p,ind);
+  to->data[ to->n++ ] = NUMNEIGHS_CU(p,ind);
+#else
   to->data[ to->n++ ] = NUMNEIGHS(p,ind);
+#endif // MATERIALAC
+  
   to->data[ to->n++ ] = p->fdi[ind]; 
   to->data[ to->n++ ] = p->fdj[ind];
   to->data[ to->n++ ] = p->fdk[ind]; 
@@ -653,7 +659,13 @@ void copy_atom_buf_cell(minicell *p, msgbuf *b, int start)
 #endif
 //MYMOD
 #ifdef TTM
+#ifdef MATERIALAC
+  NUMNEIGHS_AL(to,ind)   =b->data[j++];
+  NUMNEIGHS_CU(to,ind)   =b->data[j++];
+#else
   NUMNEIGHS(to,ind)   =b->data[j++];
+#endif // MATERIALAC
+  
   to->fdi[ind]=b->data[j++];
   to->fdj[ind]=b->data[j++];
   to->fdk[ind]=b->data[j++];
@@ -883,7 +895,12 @@ void setup_buffers(void)
 
 //MYMOD
 #ifdef TTM
+#ifdef MATERIALAC
+    binc1++;  //for numneighs_al
+    binc1++;  //for numneighs_cu
+#else
     binc1++;  //for numneighs
+#endif // MATERIALAC
     binc1++; // for fdi,fdj and fdk for advection step
     binc1++;
     binc1++;

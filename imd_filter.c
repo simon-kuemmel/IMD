@@ -42,7 +42,9 @@ void filter_init(void)
      {
        p->filterflag[i]=0;
 
-       if(ORT(p,i,X)<filter_min_x)
+       // MYMOD: Simon, 27.07.2026
+       // NOTE: Atoms leaving the simulation box at the back of the sample shall also be deleted if the pressure wave cannot be completely absorbed by NRB
+       if(ORT(p,i,X)<filter_min_x || ORT(p, i, X)>box_x.x)
        {
 	 FILTERME(p,i)=1;
 	 KEEPME(p,i)=0;
@@ -298,7 +300,12 @@ int filter_check_neighs(cell* p,int l)
 	    int col = it * ntypes + jt;
 //HOTFIX    
 col=0;
-	    if(r2<=pair_pot.end[col]) //NEIGH gefunden
+
+#ifdef ANA
+            if(r2<=ana_cutoff*ana_cutoff)
+#else
+            if(r2<=pair_pot.end[col]) //NEIGH gefunden
+#endif
 	    {	    
 	      filter_stackindex++; //atom an nächste position in der liste schieben
 	      if(filter_stackindex >NEIGHDEPTH-1) //stack voll

@@ -82,7 +82,11 @@ void calc_forces(int steps)
 #ifdef TTM
 // MYMOD: Simon, 31.03.2025, the following ifdef/endif was commented out but should still work
 #ifndef NBL //mit NBL wird NUMNEIGHS in imd_forces_nbl.c gecleart
+#ifdef MATERIALAC
+      NUMNEIGHS_AL(p,i)=NUMNEIGHS_CU(p,i)=0;
+#else
       NUMNEIGHS(p,i)=0;
+#endif // MATERIALAC
 #endif
 // END MYMOD
 #endif

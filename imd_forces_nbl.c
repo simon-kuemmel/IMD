@@ -406,7 +406,11 @@ void calc_forces(int steps)
       // l1[ilocal][jlocal][klocal].neighcount++;
       // l2[ilocal][jlocal][klocal].neighcount++;
 
+#ifdef MATERIALAC
+      NUMNEIGHS_AL(p,i)=NUMNEIGHS_CU(p,i)=0;
+#else
       NUMNEIGHS(p,i)=0;
+#endif // MATERIALAC
 #endif
 //ENDOF MYMOD      
     }
@@ -453,8 +457,20 @@ void calc_forces(int steps)
       real   eam_r = 0.0, eam_p = 0.0;
       int    m, it, nb = 0;
 #ifdef TTM
+#ifdef MATERIALAC
+      int nbttm_al=0;
+      int nbttm_cu=0;
+#else
       int nbttm=0;
+#endif // MATERIALAC
 #endif 
+      
+#ifdef ADP
+      real       tmp;
+      vektor     mu = {0.0,0.0,0.0};
+      sym_tensor la = {0.0,0.0,0.0,0.0,0.0,0.0};
+#endif
+      
       // positon of 1st atom
       d1.x = ORT(p,i,X);
       d1.y = ORT(p,i,Y);
@@ -509,17 +525,38 @@ void calc_forces(int steps)
 #ifdef TTM
 #ifdef ANA
         if (r2 <= ana_cutoff*ana_cutoff){
-          nbttm++;
+#ifdef MATERIALAC
+          if (SORTE(p, i)==0{
+            nbttm_al++;
+            NUMNEIGHS_AL(q, j)++;
+          }
+          else{
+            nbttm_cu++;
+            NUMNEIGHS_CU(q, j)++;
+          }
+#else
           NUMNEIGHS(q,j)++;
+#endif // MATERIALAC
         }
 #else
         if(r2 <= pair_pot.end[0])
-        {        
+        {
+#ifdef MATERIALAC
+          if (SORTE(p, i)==0){
+            nbttm_al++;
+            NUMNEIGHS_AL(q, j)++;
+          }
+          else{
+            nbttm_cu++;
+            NUMNEIGHS_CU(q, j)++;
+          }
+#else
           if(SORTE(p,i)==0 && SORTE(q,j)==0)
           {
             nbttm++;
             NUMNEIGHS(q,j)++;
           }
+#endif // MATERIALAC
         }
 #endif // ANA
 #endif // TTM
@@ -906,7 +943,12 @@ void calc_forces(int steps)
 #endif // not ANA
 
 #ifdef TTM
-NUMNEIGHS(p,i) += nbttm;
+#ifdef MATERIALAC
+      NUMNEIGHS_AL(p,i) += nbttm_al;
+      NUMNEIGHS_CU(p,i) += nbttm_cu;
+#else
+      NUMNEIGHS(p,i) += nbttm;
+#endif // MATERIALAC
 #endif
       n++;
     }//loop over i

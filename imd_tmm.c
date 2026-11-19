@@ -180,34 +180,38 @@ int tmm_init()
 
 
 #if defined(FDTD) || defined(LASER)
-    error("TMM does not work with FDTD or LASER. Only one of those options is allowed.");
+  error("TMM does not work with FDTD or LASER. Only one of those options is allowed.");
 #endif
 
-    laser_spot_area=(fd_h.y*1e-10*fd_h.z*1e-10);
-        if(myid==0){
-          printf("*****************************************\n");
-          printf("*        TRANSFER-MATRIX METHOD         *\n");
-          printf("*****************************************\n");
-          printf("lambda:%.4e\n",lambda);
-          printf("theta:%f (deg)\n", tmm_theta);
-          printf("tmm_absorption_threshold:%f\n",tmm_absorption_threshold);
-          printf("tmm_laser_threshold:%f\n",tmm_laser_threshold);
-          if(tmm_pol==1)
-            printf("Polarization: S\n");
-          if(tmm_pol==2)
-	        printf("Polarization: P\n");
-          printf("I0:%.4e W/m^2\n",I0);
-          printf("t0:%.4e\n",laser_t_0);
-          printf("t1:%.4e\n",laser_t_1);
-          printf("t_FWHM:%.4e, t1_FWHM:%.4e\n", tau_p, tau_p1);          
-          printf("***************************\n");
-	}
+  laser_spot_area=(fd_h.y*1e-10*fd_h.z*1e-10);
+
+  if(myid==0){
+    printf("*****************************************\n");
+    printf("*        TRANSFER-MATRIX METHOD         *\n");
+    printf("*****************************************\n");
+    printf("lambda: %f nm\n", lambda*1.0e9);
+    printf("theta: %f deg\n", tmm_theta);
+    printf("tmm_absorption_threshold: %f\n", tmm_absorption_threshold);
+    printf("tmm_laser_threshold: %f\n", tmm_laser_threshold);
+      
+    if(tmm_pol==1)
+      printf("Polarization: S\n");
+    if(tmm_pol==2)
+      printf("Polarization: P\n");
+      
+    printf("I0: %.4e W/m^2\n", I0); // TODO: %f or %.4e
+    printf("t0: %f fs\n", laser_t_0*1.0e15);
+    printf("t1: %f fs\n", laser_t_1*1.0e15);
+    printf("t_FWHM: %f fs, t1_FWHM: %f fs\n", tau_p*1.0e15, tau_p1*1.0e15);
+
+    printf("***************************\n");
+  }
 
   return 0;
 }
 // **********************************************************************************************************************
 int do_tmm(real dt)
-{  
+{
   int i,iglobal,j;
   double Imp=3.769911184307751e+02; // vacuum impedanz
   I_t=I0*exp(-4*log(2)*pow(tmm_time-laser_t_0,2)/(tau_p*tau_p));
@@ -557,7 +561,12 @@ int tmm_get_epsilon_TFM(double lambda, double Te,double Ti, double Z, double Ne,
 
 
         double complex epsilon_bb = epsl_bb(il) + (epsl_bb(ir) - epsl_bb(il))/ (eps_bb_data[ir][0] - eps_bb_data[il][0])* (lambda*1e6 - eps_bb_data[il][0]);
+        
+#ifdef MATERIALAC
+        int phase=((int) EOS_phase_from_r_ti(Ni*atomic_weight[0]*AMU,Ti));
+#else
         int phase=((int) EOS_phase_from_r_ti(Ni*atomic_weight*AMU,Ti));
+#endif // MATERIALAC
 
         if( fabs(phase)==3 || fabs(phase)==4 || fabs(phase)==5)
           epsilon_bb=0*I*0;
@@ -767,10 +776,10 @@ int tmm_get_epsilon_Cu(double lambda, double Te, double Ti, real* re, real* img,
   double epsilon_DCP_31_imaginary = B_3 * Omega_3 * (sin(phi_3) * (Omega_3 - omega) + cos(phi_3) * Gamma_3) / (pow(Omega_3 - omega, 2) + pow(Gamma_3, 2));
   double epsilon_DCP_32_imaginary = B_3 * Omega_3 * (-(sin(phi_3) * (Omega_3 + omega) + cos(phi_3) * Gamma_3)) / (pow(Omega_3 + omega, 2) + pow(Gamma_3, 2));
 
-  double complex epsilon_tot_real = epsilon_Drude_real + x * (epsilon_DCP_11_real + epsilon_DCP_12_real + epsilon_DCP_21_real + \
-                                                              epsilon_DCP_22_real + epsilon_DCP_31_real + epsilon_DCP_32_real);
-  double complex epsilon_tot_imaginary = epsilon_Drude_imaginary + x * (epsilon_DCP_11_imaginary + epsilon_DCP_12_imaginary + epsilon_DCP_21_imaginary + \
-                                                                        epsilon_DCP_22_imaginary + epsilon_DCP_31_imaginary + epsilon_DCP_32_imaginary);
+  double epsilon_tot_real = epsilon_Drude_real + x * (epsilon_DCP_11_real + epsilon_DCP_12_real + epsilon_DCP_21_real + \
+                                                      epsilon_DCP_22_real + epsilon_DCP_31_real + epsilon_DCP_32_real);
+  double epsilon_tot_imaginary = epsilon_Drude_imaginary + x * (epsilon_DCP_11_imaginary + epsilon_DCP_12_imaginary + epsilon_DCP_21_imaginary + \
+                                                                epsilon_DCP_22_imaginary + epsilon_DCP_31_imaginary + epsilon_DCP_32_imaginary);
   // ENDOF MYMOD
 
   *re = epsilon_tot_real;
